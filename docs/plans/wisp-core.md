@@ -19,6 +19,8 @@
 - A failed reading is `None` and displays as `—`; no panics on failed system calls.
 - Release profile: `opt-level = 3`, `lto = true`, `codegen-units = 1`, `strip = true`, `panic = "abort"`.
 - Default interval 2 s, timer tolerance 10% of the interval, timer in the run loop's common modes.
+- Read only what is on screen: the menu bar path reads CPU, GPU and memory; network, pressure and swap are read only when the dropdown is open (`Sampler::sample(detail)`). A hidden reading still costs a wakeup's worth of syscalls.
+- Scope decision (2026-10-17): `feat/core` ships as one `feat → main` PR of ~970 lines (~710 code, ~260 tests), accepted over the 400-line gate.
 - Every source file opens with a 1–2 line `//!` header; every `pub` item has a one-line `///` doc.
 - Conventional Commits, no AI attribution, one task = one commit, never squash.
 - objc2 signatures below are written against objc2 0.6.5 / objc2-app-kit 0.3.2. If the compiler disagrees on a signature, look the method up on docs.rs for that exact version and adjust the call — keep the behaviour.
@@ -30,6 +32,8 @@
 3. **CPU tick counters wrap** (`u32`) after long uptime → expect a sane percentage. Test in Task 3.
 4. **GPU service missing or key renamed** on a future macOS → expect `—` for GPU, everything else live. Test in Task 6 (format) and Task 5 (`Gpu::utilization` returns `None` instead of panicking when the property is absent).
 5. **Purgeable pages exceed internal pages** briefly → expect App = 0, not an underflow panic. Test in Task 2.
+6. **Menu closed** → network, pressure and swap are not read at all, and the network baseline is dropped so the first detailed sample is never a rate across a long gap. Test in Task 6.
+7. **A reading goes missing** → the menu bar item keeps its exact width (figure dash, U+2012, is digit-wide). Test in Task 6.
 
 ---
 
@@ -41,20 +45,23 @@ git switch main && git pull
 git switch -c feat/core
 ```
 
-Milestones branch off `feat/core`: `ms/1-scaffold` (Task 1), `ms/2-samplers` (Tasks 2–5), `ms/3-live-title` (Tasks 6–9). Each milestone: commit per task → PR `ms → feat/core` → self-merge on green. After milestone 3, open PR `feat/core → main` for human review.
+Milestones branch off `feat/core`: `ms/1-scaffold` (Task 1), `ms/2-samplers` (Tasks 2–5), `ms/3-live-title` (Tasks 6–9). Each milestone: commit per task → PR `ms → feat/core` → self-merge on green. After milestone 3, open PR `feat/core → main` with the Task 9 measurements, review it, and merge (the user granted merge access on 2026-10-17).
+
+"Green" means, run locally: `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` (milestone 2 adds `-A dead_code`, since the readers are unused until Task 6). There is no CI: several tests read live hardware counters that a CI VM may not have.
 
 ---
 
 ### Task 0: Install the Rust toolchain (needs the user's OK)
 
-Rust is not installed on this machine. **Ask the user before running this.**
+Approved by the user on 2026-10-17.
 
-- [ ] **Step 1: Install rustup and stable Rust**
+- [x] **Step 1: Install rustup and stable Rust** — done 2026-10-17 (rustc 1.99.1). Homebrew's rustup is keg-only and ships no `rustup-init`:
 
 ```bash
 brew install rustup
-rustup-init -y --default-toolchain stable --profile minimal
-source "$HOME/.cargo/env"
+export PATH=/opt/homebrew/opt/rustup/bin:$PATH   # also appended to ~/.zshrc
+rustup set profile minimal && rustup default stable
+rustup component add clippy rustfmt
 rustc --version && cargo --version
 ```
 
@@ -248,7 +255,19 @@ chmod +x scripts/bundle.sh
 
 Expected: build succeeds with no warnings; "Wisp" appears in the menu bar; no Dock icon; clicking shows "Quit Wisp ⌘Q"; Quit (and ⌘Q while the menu is open) exits; `pgrep -x wisp` prints nothing afterwards.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 7: Measure the AppKit floor**
+
+The scaffold does no sampling, so its footprint is the floor every later task builds on. If it is already near 15 MB, S2 is at risk and we learn that now, not at Task 9. Relaunch, wait 60 s, then:
+
+```bash
+PID=$(pgrep -x wisp)
+footprint "$PID" | head -n 5
+top -l 30 -s 2 -pid "$PID" -stats pid,cpu,idlew,power | awk '$1==pid {c+=$2; w+=$3; p+=$4; n++} END {printf "avg cpu %.3f%%  idle wakeups %.2f/s  power %.3f  (%d samples)\n", c/n, w/n/2, p/n, n}' pid="$PID"
+```
+
+Record the numbers in the `ms/1-scaffold` PR description. Note: `top -l` reports idle wakeups per sample interval, hence the divide by 2 s.
+
+- [ ] **Step 8: Commit**
 
 ```bash
 git add Cargo.toml Cargo.lock .gitignore src/main.rs bundle/Info.plist scripts/bundle.sh
@@ -693,6 +712,15 @@ mod tests {
     }
 
     #[test]
+    fn parse_skips_an_ifinfo2_message_shorter_than_the_struct() {
+        let mut buf = msg(4, libc::IFF_UP, 100, 50);
+        buf[0..2].copy_from_slice(&8u16.to_ne_bytes()); // claims 8 bytes: not a whole if_msghdr2
+        buf.truncate(8);
+        buf.extend(msg(5, libc::IFF_UP, 10, 20));
+        assert_eq!(parse(&buf), vec![iface(5, 10, 20)]);
+    }
+
+    #[test]
     fn live_reading_succeeds() {
         assert!(read().is_some());
     }
@@ -774,7 +802,8 @@ fn parse(buf: &[u8]) -> Counters {
             break;
         }
         let kind = buf[off + 3] as i32;
-        if kind == libc::RTM_IFINFO2 && off + size_of::<libc::if_msghdr2>() <= buf.len() {
+        let whole = msglen >= size_of::<libc::if_msghdr2>() && off + size_of::<libc::if_msghdr2>() <= buf.len();
+        if kind == libc::RTM_IFINFO2 && whole {
             // The buffer has no alignment guarantee for this packed struct, so read it unaligned.
             let m: libc::if_msghdr2 = unsafe { ptr::read_unaligned(buf[off..].as_ptr().cast()) };
             let flags = m.ifm_flags;
@@ -791,7 +820,7 @@ fn parse(buf: &[u8]) -> Counters {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `cargo test net::`
-Expected: 7 passed.
+Expected: 8 passed.
 
 - [ ] **Step 5: Commit**
 
@@ -828,8 +857,15 @@ mod tests {
     #[test]
     fn missing_property_is_none_not_a_panic() {
         let gpu = Gpu::open().unwrap();
-        assert_eq!(gpu.property_f64("PerformanceStatistics", "No Such Key"), None);
-        assert_eq!(gpu.property_f64("NoSuchProperty", "Device Utilization %"), None);
+        assert_eq!(gpu.property_f64(PERF_STATS, ns_string!("No Such Key")), None);
+        assert_eq!(gpu.property_f64(ns_string!("NoSuchProperty"), UTILIZATION), None);
+    }
+
+    #[test]
+    fn non_dictionary_property_is_none_not_a_crash() {
+        // IOClass is a string-valued property on every registry entry.
+        let gpu = Gpu::open().unwrap();
+        assert_eq!(gpu.property_f64(ns_string!("IOClass"), UTILIZATION), None);
     }
 }
 ```
@@ -850,10 +886,13 @@ use std::ptr;
 
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
-use objc2_foundation::{NSDictionary, NSNumber, NSString};
+use objc2_foundation::{ns_string, NSDictionary, NSNumber, NSString};
 
 type IoObject = u32;
 const IO_MAIN_PORT_DEFAULT: u32 = 0;
+// Static strings: no NSString is allocated per tick.
+const PERF_STATS: &NSString = ns_string!("PerformanceStatistics");
+const UTILIZATION: &NSString = ns_string!("Device Utilization %");
 
 #[link(name = "IOKit", kind = "framework")]
 unsafe extern "C" {
@@ -883,19 +922,19 @@ impl Gpu {
 
     /// The GPU's current "Device Utilization %", 0–100.
     pub fn utilization(&self) -> Option<f64> {
-        self.property_f64("PerformanceStatistics", "Device Utilization %")
+        self.property_f64(PERF_STATS, UTILIZATION)
     }
 
     /// Reads `dict_key` from the dictionary-valued registry property `property` as a number.
-    fn property_f64(&self, property: &str, dict_key: &str) -> Option<f64> {
-        let property = NSString::from_str(property);
+    fn property_f64(&self, property: &NSString, dict_key: &NSString) -> Option<f64> {
         let raw = unsafe {
-            IORegistryEntryCreateCFProperty(self.0, Retained::as_ptr(&property).cast(), ptr::null(), 0)
+            IORegistryEntryCreateCFProperty(self.0, (property as *const NSString).cast(), ptr::null(), 0)
         };
-        // CFDictionary is toll-free bridged to NSDictionary, and the Create rule hands us one reference to own.
-        let stats: Retained<NSDictionary<NSString, AnyObject>> = unsafe { Retained::from_raw(raw.cast()) }?;
-        let value = stats.objectForKey(&NSString::from_str(dict_key))?;
-        let number = value.downcast::<NSNumber>().ok()?;
+        // CF types are toll-free bridged to their NS counterparts, and the Create rule hands us one reference to own.
+        let value: Retained<AnyObject> = unsafe { Retained::from_raw(raw.cast()) }?;
+        // Check the class before treating it as a dictionary: a wrong guess would raise an ObjC exception and abort.
+        let stats = value.downcast::<NSDictionary>().ok()?;
+        let number = stats.objectForKey(dict_key)?.downcast::<NSNumber>().ok()?;
         Some(number.doubleValue())
     }
 }
@@ -907,12 +946,12 @@ impl Drop for Gpu {
 }
 ```
 
-Note: if the property exists but is not a dictionary, the cast above would be wrong. `PerformanceStatistics` is always a dictionary on the IOAccelerator; `ioreg -r -c IOAccelerator -d 1` confirmed it on macOS 27 / M5. A `"NoSuchProperty"` lookup returns null, which `from_raw` maps to `None`.
+Note: `PerformanceStatistics` is a dictionary on the IOAccelerator (`ioreg -r -c IOAccelerator -d 1`, macOS 27 / M5); the class check keeps a future change from crashing. A `"NoSuchProperty"` lookup returns null, which `from_raw` maps to `None`. objc2 0.6's `downcast` is a class check; if the compiler rejects `downcast::<NSDictionary>()` (generic class) or the `objectForKey` key type, use `value.isKindOfClass(NSDictionary::class())` and then cast — keep the check.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `cargo test gpu::`
-Expected: 2 passed.
+Expected: 3 passed.
 
 - [ ] **Step 5: Commit**
 
@@ -938,7 +977,7 @@ Then open PR `ms/2-samplers → feat/core`; self-merge once `cargo test` and `ca
 - Consumes: everything produced in Tasks 2–5.
 - Produces:
   - `sample::Snapshot { cpu: Option<f64>, gpu: Option<f64>, mem: Option<Memory>, pressure: Option<Pressure>, swap: Option<Swap>, net: Option<Net> }` (Clone, Default, PartialEq)
-  - `sample::Sampler::new() -> Sampler`, `Sampler::sample(&mut self) -> Snapshot`, `Sampler::reset(&mut self)`
+  - `sample::Sampler::new() -> Sampler`, `Sampler::sample(&mut self, detail: bool) -> Snapshot`, `Sampler::reset(&mut self)`
   - `format::StatusLine = [(&'static str, String); 3]`, `format::status(&Snapshot) -> StatusLine`, `format::percent(Option<f64>) -> String`, `format::size(u64) -> String`, `format::size_of_total(u64, u64) -> String`, `format::rate(f64) -> String`, `format::pressure(Option<Pressure>) -> &'static str`, `format::MISSING`
 
 - [ ] **Step 1: Write the failing tests at the bottom of `src/sample/mod.rs`**
@@ -949,10 +988,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sampler_produces_a_full_snapshot() {
+    fn detailed_sample_is_a_full_snapshot() {
         let mut sampler = Sampler::new();
         std::thread::sleep(std::time::Duration::from_millis(200));
-        let s = sampler.sample();
+        let s = sampler.sample(true);
         let cpu = s.cpu.expect("cpu");
         assert!((0.0..=100.0).contains(&cpu));
         assert!(s.gpu.is_some());
@@ -960,6 +999,18 @@ mod tests {
         assert!(s.pressure.is_some());
         assert!(s.swap.is_some());
         assert!(s.net.is_some());
+    }
+
+    #[test]
+    fn menu_bar_sample_skips_dropdown_readings_and_drops_the_net_baseline() {
+        let mut sampler = Sampler::new();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let s = sampler.sample(false);
+        assert!(s.cpu.is_some() && s.gpu.is_some() && s.mem.is_some());
+        assert_eq!((s.pressure, s.swap, s.net), (None, None, None));
+        // No baseline survived, so the first detailed sample has no rate rather than one across the gap.
+        assert_eq!(sampler.sample(true).net, None);
+        assert!(sampler.sample(true).net.is_some());
     }
 }
 ```
@@ -1029,8 +1080,9 @@ impl Sampler {
         self.net_prev = net::read().map(|c| (c, Instant::now()));
     }
 
-    /// Reads everything once. Delta-based readings cover the time since the previous call.
-    pub fn sample(&mut self) -> Snapshot {
+    /// Reads the menu bar values; with `detail` (dropdown open) also network, pressure and swap.
+    /// Delta-based readings cover the time since the previous call.
+    pub fn sample(&mut self, detail: bool) -> Snapshot {
         let cpu_now = cpu::read(self.host);
         let cpu = match (self.cpu_prev, cpu_now) {
             (Some(prev), Some(now)) => cpu::busy_percent(prev, now),
@@ -1038,22 +1090,28 @@ impl Sampler {
         };
         self.cpu_prev = cpu_now;
 
+        let mut snap = Snapshot {
+            cpu,
+            gpu: self.gpu.as_ref().and_then(gpu::Gpu::utilization),
+            mem: self.total.zip(mem::read_pages(self.host)).map(|(t, p)| mem::memory(t, self.page_size, p)),
+            ..Snapshot::default()
+        };
+        if !detail {
+            // Nobody sees the dropdown readings, so skip them; a stale net baseline would average across the gap.
+            self.net_prev = None;
+            return snap;
+        }
+
         let at = Instant::now();
         let net_now = net::read();
-        let net = match (&self.net_prev, &net_now) {
+        snap.net = match (&self.net_prev, &net_now) {
             (Some((prev, then)), Some(now)) => net::rate(prev, now, at.duration_since(*then).as_secs_f64()),
             _ => None,
         };
         self.net_prev = net_now.map(|c| (c, at));
-
-        Snapshot {
-            cpu,
-            gpu: self.gpu.as_ref().and_then(gpu::Gpu::utilization),
-            mem: self.total.zip(mem::read_pages(self.host)).map(|(t, p)| mem::memory(t, self.page_size, p)),
-            pressure: mem::read_pressure(),
-            swap: mem::read_swap(),
-            net,
-        }
+        snap.pressure = mem::read_pressure();
+        snap.swap = mem::read_swap();
+        snap
     }
 }
 ```
@@ -1061,7 +1119,7 @@ impl Sampler {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `cargo test sample::tests`
-Expected: 1 passed.
+Expected: 2 passed.
 
 - [ ] **Step 5: Write the failing format tests in a new `src/format.rs`**
 
@@ -1092,7 +1150,9 @@ mod tests {
 
     #[test]
     fn missing_values_show_a_dash() {
-        assert_eq!(percent(None), "\u{2007}\u{2007}—");
+        // Figure dash is digit-wide, so a missing reading keeps the menu bar item's width.
+        assert_eq!(percent(None), "\u{2007}\u{2007}\u{2012}%");
+        assert_eq!(percent(None).chars().count(), 4);
         assert_eq!(pressure(None), MISSING);
     }
 
@@ -1130,7 +1190,7 @@ mod tests {
         };
         let line = status(&snap);
         assert_eq!(line[0], ("CPU", "\u{2007}12%".to_string()));
-        assert_eq!(line[1], ("GPU", "\u{2007}\u{2007}—".to_string()));
+        assert_eq!(line[1], ("GPU", "\u{2007}\u{2007}\u{2012}%".to_string()));
         assert_eq!(line[2], ("MEM", "\u{2007}61%".to_string()));
     }
 }
@@ -1148,11 +1208,12 @@ Expected: compile errors — `percent`, `size`, `rate`, etc. not found.
 
 use crate::sample::{Pressure, Snapshot};
 
-/// Shown in place of any reading that failed.
+/// Shown in the dropdown in place of any reading that failed.
 pub const MISSING: &str = "—";
 
-/// U+2007 is as wide as a digit, so padded numbers keep the menu bar item a constant width.
+/// U+2007 and U+2012 are as wide as a digit, so padded numbers and missing values keep the menu bar item a constant width.
 const FIGURE_SPACE: char = '\u{2007}';
+const FIGURE_DASH: char = '\u{2012}';
 const GIB: f64 = (1u64 << 30) as f64;
 
 /// The menu bar's (label, value) pairs in display order.
@@ -1167,13 +1228,13 @@ pub fn status(s: &Snapshot) -> StatusLine {
     ]
 }
 
-/// A whole-number percentage padded to three digit-widths, e.g. "  3%"; missing is "  —".
+/// A whole-number percentage padded to three digit-widths, e.g. "  3%"; missing is "  ‒%".
 pub fn percent(value: Option<f64>) -> String {
     let pad = |s: String| s.replace(' ', &FIGURE_SPACE.to_string());
     match value {
         // NaN clamps to NaN and `as u32` maps it to 0.
         Some(v) => pad(format!("{:>3}%", v.round().clamp(0.0, 100.0) as u32)),
-        None => format!("{FIGURE_SPACE}{FIGURE_SPACE}{MISSING}"),
+        None => format!("{FIGURE_SPACE}{FIGURE_SPACE}{FIGURE_DASH}%"),
     }
 }
 
@@ -1223,7 +1284,7 @@ fn one_decimal(x: f64) -> String {
 - [ ] **Step 8: Run tests to verify they pass**
 
 Run: `cargo test`
-Expected: all tests pass (mem 5, cpu 5, net 7, gpu 2, sample 1, format 7).
+Expected: all tests pass (mem 5, cpu 5, net 8, gpu 3, sample 2, format 7).
 
 - [ ] **Step 9: Commit**
 
@@ -1415,7 +1476,8 @@ impl AppDelegate {
 
     /// Samples once and updates the menu bar text.
     fn tick(&self) {
-        let snapshot = self.ivars().sampler.borrow_mut().sample();
+        // Menu bar values only; the menu feature passes `true` while the dropdown is open.
+        let snapshot = self.ivars().sampler.borrow_mut().sample(false);
         if let Some(status) = self.ivars().status.get() {
             status.show(self.mtm(), format::status(&snapshot));
         }
@@ -1486,15 +1548,17 @@ git commit -m "feat: show live CPU, GPU and memory in the menu bar"
 
 **Files:** none (results go in the `feat/core → main` PR description; the README table is the menu feature's job).
 
-- [ ] **Step 1: Footprint and CPU (S1, S2)** — with Wisp running from `target/Wisp.app` for 10 minutes, menu closed:
+- [ ] **Step 1: Footprint, CPU, wakeups and power (S1, S2, S5)** — with Wisp running from `target/Wisp.app` for 10 minutes, menu closed:
 
 ```bash
 PID=$(pgrep -x wisp)
-top -l 300 -s 2 -pid "$PID" -stats pid,cpu,mem,idlew | awk 'NR>1 && $1==pid {c+=$2; n++} END {printf "avg cpu %.3f%% over %d samples\n", c/n, n}' pid="$PID"
+top -l 300 -s 2 -pid "$PID" -stats pid,cpu,idlew,power | awk '$1==pid {c+=$2; w+=$3; p+=$4; n++} END {printf "avg cpu %.3f%%  idle wakeups %.2f/s  power %.3f  (%d samples)\n", c/n, w/n/2, p/n, n}' pid="$PID"
 footprint "$PID" | head -n 5
 ```
 
-Expected: average CPU < 0.1%; phys footprint < 15 MB. (`top`'s first sample is cumulative — with 300 samples it does not move the average meaningfully; drop it if borderline.)
+Expected: average CPU < 0.1%; phys footprint < 15 MB; about 0.5 idle wakeups/s (one per 2 s tick). Compare footprint with the Task 1 floor. (`top`'s first sample is cumulative — with 300 samples it does not move the average meaningfully; drop it if borderline.) Run the same command against Stats (`pgrep -x Stats`) for S5: CPU will round near zero for both, so wakeups and power are the comparison that matters.
+
+- [ ] **Step 1b: App Nap** — during the same 10 minutes, keep another app frontmost and glance at the menu bar: values must still change every ~2 s. If they stall, App Nap is throttling the timer; only then hold an `NSProcessInfo` activity (`beginActivityWithOptions_reason`) for the app's lifetime and re-measure, since it can raise wakeups.
 
 - [ ] **Step 2: WindowServer (S4)** — 60 s of `top -l 30 -s 2 -pid $(pgrep -x WindowServer) -stats cpu` with Wisp running, then again with Wisp quit. Expected: averages within noise of each other.
 
@@ -1504,4 +1568,4 @@ Expected: average CPU < 0.1%; phys footprint < 15 MB. (`top`'s first sample is c
 
 - [ ] **Step 5: Open PRs**
 
-PR `ms/3-live-title → feat/core` (self-merge on green), then PR `feat/core → main` with the measurements, left open for human review.
+PR `ms/3-live-title → feat/core` (self-merge on green), then PR `feat/core → main` with the measurements; review it and merge (merge access granted 2026-10-17).
