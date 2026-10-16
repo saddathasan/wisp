@@ -262,12 +262,12 @@ The scaffold does no sampling, so its footprint is the floor every later task bu
 ```bash
 PID=$(pgrep -x wisp)
 footprint "$PID" | head -n 5
-top -l 30 -s 2 -pid "$PID" -stats pid,cpu,idlew,power | awk '$1==pid && seen++ {c+=$2; w+=$3; p+=$4; n++} END {printf "avg cpu %.3f%%  idle wakeups %.2f/s  power %.3f  (%d samples)\n", c/n, w/n/2, p/n, n}' pid="$PID"
+./scripts/measure.sh "$PID" 60
 ```
 
-Record the numbers in the `ms/1-scaffold` PR description. Note: `top -l` reports idle wakeups per sample interval, hence the divide by 2 s; `seen++` drops the first sample, which is cumulative since launch.
+Record the numbers in the `ms/1-scaffold` PR description. `scripts/measure.sh` (added in ms/3) uses counter deltas: `top`'s IDLEW column is cumulative since launch, so averaging it is meaningless.
 
-Measured 2026-10-17 (M5, macOS 27, settled): footprint 13 MB, CPU 0.000%, **1.0 idle wakeups/s**, power 0.000.
+Measured 2026-10-17 with `scripts/measure.sh` (M5, macOS 27, settled, 60 s): footprint 13–17 MB, CPU 0.17%, 0.28 idle wakeups/s. An earlier "1.0/s" figure averaged the cumulative IDLEW column and was wrong.
 
 - [ ] **Step 8: Commit**
 
@@ -992,7 +992,7 @@ mod tests {
     #[test]
     fn detailed_sample_is_a_full_snapshot() {
         let mut sampler = Sampler::new();
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        std::thread::sleep(std::time::Duration::from_millis(1100));
         let s = sampler.sample(true);
         let cpu = s.cpu.expect("cpu");
         assert!((0.0..=100.0).contains(&cpu));
@@ -1006,7 +1006,7 @@ mod tests {
     #[test]
     fn menu_bar_sample_skips_dropdown_readings_and_drops_the_net_baseline() {
         let mut sampler = Sampler::new();
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        std::thread::sleep(std::time::Duration::from_millis(1100));
         let s = sampler.sample(false);
         assert!(s.cpu.is_some() && s.gpu.is_some() && s.mem.is_some());
         assert_eq!((s.pressure, s.swap, s.net), (None, None, None));
@@ -1554,11 +1554,14 @@ git commit -m "feat: show live CPU, GPU and memory in the menu bar"
 
 ```bash
 PID=$(pgrep -x wisp)
-top -l 300 -s 2 -pid "$PID" -stats pid,cpu,idlew,power | awk '$1==pid && seen++ {c+=$2; w+=$3; p+=$4; n++} END {printf "avg cpu %.3f%%  idle wakeups %.2f/s  power %.3f  (%d samples)\n", c/n, w/n/2, p/n, n}' pid="$PID"
+./scripts/measure.sh "$PID" 600
+top -l 300 -s 2 -pid "$PID" -stats pid,power | awk '$1==pid && seen++ {p+=$2; n++} END {printf "avg power %.3f (%d samples)\n", p/n, n}' pid="$PID"
 footprint "$PID" | head -n 5
 ```
 
-Expected: average CPU < 0.1%; phys footprint < 15 MB; idle wakeups ≤ the Task 1 floor + ~0.5/s (one per 2 s tick), i.e. ≈ 1.5/s. Compare footprint with the Task 1 floor (13 MB). Run the same command against Stats (`pgrep -x Stats`) for S5: CPU will round near zero for both, so power is the comparison that matters (Stats' `idlew` read back implausibly large on macOS 27; record it but don't rely on it).
+Expected: average CPU < 0.1%; phys footprint < 15 MB; compare with the Task 1 floor. Run the same commands against Stats (`pgrep -x Stats`) for S5.
+
+Note: the kernel publishes idle CPU ticks up to ~1 s apart on macOS 27, so the sampler tests wait 1.1 s (a 200 ms window often saw no elapsed ticks).
 
 - [ ] **Step 1b: App Nap** — during the same 10 minutes, keep another app frontmost and glance at the menu bar: values must still change every ~2 s. If they stall, App Nap is throttling the timer; only then hold an `NSProcessInfo` activity (`beginActivityWithOptions_reason`) for the app's lifetime and re-measure, since it can raise wakeups.
 
