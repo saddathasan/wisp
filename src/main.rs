@@ -12,6 +12,8 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSNotification, NSObject, NSObjectProtocol, ns_string};
 
+mod sample;
+
 /// State the delegate keeps alive for the app's lifetime.
 #[derive(Default)]
 struct Ivars {
