@@ -13,11 +13,11 @@ of text, plus one plain list on click, and nothing else.
 
 | # | Criterion | How it's checked |
 |---|-----------|------------------|
-| S1 | Average CPU < 0.1% over 10 min at the default 2 s interval, menu closed | `top -l 300 -s 2 -pid <pid> -stats cpu` (ignore first sample) |
+| S1 | Average CPU < 0.1% and ~0.5 idle wakeups/s over 10 min at the default 2 s interval, menu closed | `top -l 300 -s 2 -pid <pid> -stats cpu,idlew,power` (ignore first sample) |
 | S2 | Physical footprint < 15 MB after 10 min | `footprint <pid>` |
 | S3 | ~Zero activity while the display is asleep or the screen is locked | `top` sample during display sleep |
 | S4 | No added WindowServer load vs. no monitor running | `top -pid $(pgrep WindowServer)`, with and without Wisp |
-| S5 | Measurably cheaper than Stats tuned to CPU+GPU+RAM (~1.6% CPU) | same `top` run on both |
+| S5 | Measurably cheaper than Stats tuned to CPU+GPU+RAM (~1.6% CPU) | same `top` run on both, comparing CPU, idle wakeups and power |
 | S6 | Readings agree with Activity Monitor (CPU %, Memory Used, Swap) within rounding | side-by-side check |
 | S7 | Looks native and polished in light and dark mode | screenshots in both, reviewed before release |
 
@@ -42,7 +42,7 @@ One line of text: `CPU 12%  GPU 3%  MEM 61%`.
 - Labels in the secondary label colour; values in the primary label colour.
 - System font at menu bar size with **monospaced digits**. Each value is padded to three digits
   with figure spaces (U+2007), so the item's width never changes and never nudges neighbouring
-  icons.
+  icons. A missing reading shows as a figure dash (U+2012, also digit-wide), e.g. `GPU  ‒%`.
 - Light/dark and the menu bar's tinting are handled by using system semantic colours only.
 
 ### 3.2 Dropdown (on click)
@@ -74,6 +74,9 @@ Quit Wisp                           ⌘Q
   one right-aligned column; the breakdown line uses the secondary label colour.
 - The pressure dot is green (Normal), yellow (Warning) or red (Critical), using system colours.
 - Rows are built once at launch and updated in place, only while the menu is open.
+- Network, pressure and swap are read only while the menu is open; with it closed, each tick reads
+  just CPU, GPU and memory. The network baseline is dropped while closed, so the first rate after
+  opening is never averaged across the closed period.
 - Interval and Launch at Login use standard checkmarks; Quit has ⌘Q.
 
 ### 3.3 Behaviour
@@ -121,7 +124,7 @@ All work without root or entitlements. The GPU key, pressure level, swap and 16 
 |---|---|---|
 | CPU % | `host_statistics(HOST_CPU_LOAD_INFO)` | `(Δuser+Δsystem+Δnice) / Δtotal` between samples |
 | Memory total | `sysctl hw.memsize` | read once |
-| App / Wired / Compressed | `host_statistics64(HOST_VM_INFO64)` | App = `internal_page_count − purgeable_count`; Wired = `wire_count`; Compressed = `compressor_page_count`; pages × `vm_kernel_page_size` (16 KB on Apple Silicon — never hard-code 4096) |
+| App / Wired / Compressed | `host_statistics64(HOST_VM_INFO64)` | App = `internal_page_count − purgeable_count`; Wired = `wire_count`; Compressed = `compressor_page_count`; pages × `sysconf(_SC_PAGESIZE)` (16 KB on Apple Silicon — never hard-code 4096) |
 | Memory Used / % | derived | Used = App + Wired + Compressed (Activity Monitor's definition); % = Used / total |
 | Pressure | `sysctl kern.memorystatus_vm_pressure_level` | 1 Normal, 2 Warning, 4 Critical, other → `—` |
 | Swap | `sysctl vm.swapusage` (`xsw_usage`) | used / total |
@@ -140,8 +143,9 @@ Only what the design needs; exact versions are pinned in the implementation plan
 
 - `objc2`, `objc2-foundation`, `objc2-app-kit` — AppKit bindings
 - `objc2-service-management` — launch at login
-- IOKit + CoreFoundation bindings (the objc2-family crates) — GPU reading
-- `libc` (and `mach2` if `libc` lacks a needed Mach call) — system counters
+- `libc` — sysctl and Mach counters (its two deprecated Mach calls are allowed locally; no `mach2`)
+- IOKit through four hand-declared `extern "C"` functions; the CF dictionary it returns is read through
+  toll-free bridging to `NSDictionary`, so no IOKit or CoreFoundation crate
 
 Excluded on purpose: `sysinfo` (broad, refreshes far more than needed), `tray-icon`/`tao`
 (an extra event loop and a few MB for nothing we use), `cacao` (unmaintained since 2023).
@@ -178,7 +182,8 @@ The repo follows `main ← feat/<slug> ← ms/<n>-<slug>` with a human-reviewed 
 kept to about 400 changed lines. v1 is therefore split into two features:
 
 1. **`feat/core`** — samplers, formatting, the menu bar text, the bundle script, unit tests.
-   A usable monitor on its own.
+   A usable monitor on its own. Accepted as one ~970-line PR (incl. ~260 test lines) over the
+   400-line guideline (decision 2026-10-17).
 2. **`feat/menu`** — the dropdown, interval setting, launch at login, sleep/lock pause, polish
    pass with screenshots, footprint measurement, README.
 
@@ -190,3 +195,6 @@ kept to about 400 changed lines. v1 is therefore split into two features:
 | objc2 API churn between minor versions | pin versions; the AppKit surface used is small |
 | Custom menu rows cost more than expected | measured in S2; fall back to attributed titles with a no-op action |
 | Menu bar text unreadable on some wallpapers / tinted menu bars | semantic colours only; checked in S7 |
+| App Nap throttles the timer of a background accessory app, leaving values stale | checked during the S1 run; hold an `NSProcessInfo` activity only if values stall |
+| Launch at Login (`SMAppService`) is tied to the code signature, which every ad-hoc rebuild changes | spike it first in `feat/menu`; document re-enabling after a rebuild if needed |
+| AppKit's own floor leaves little room under the 15 MB target | footprint of the bare scaffold measured in `feat/core` Task 1, before anything else is built |
