@@ -262,10 +262,12 @@ The scaffold does no sampling, so its footprint is the floor every later task bu
 ```bash
 PID=$(pgrep -x wisp)
 footprint "$PID" | head -n 5
-top -l 30 -s 2 -pid "$PID" -stats pid,cpu,idlew,power | awk '$1==pid {c+=$2; w+=$3; p+=$4; n++} END {printf "avg cpu %.3f%%  idle wakeups %.2f/s  power %.3f  (%d samples)\n", c/n, w/n/2, p/n, n}' pid="$PID"
+top -l 30 -s 2 -pid "$PID" -stats pid,cpu,idlew,power | awk '$1==pid && seen++ {c+=$2; w+=$3; p+=$4; n++} END {printf "avg cpu %.3f%%  idle wakeups %.2f/s  power %.3f  (%d samples)\n", c/n, w/n/2, p/n, n}' pid="$PID"
 ```
 
-Record the numbers in the `ms/1-scaffold` PR description. Note: `top -l` reports idle wakeups per sample interval, hence the divide by 2 s.
+Record the numbers in the `ms/1-scaffold` PR description. Note: `top -l` reports idle wakeups per sample interval, hence the divide by 2 s; `seen++` drops the first sample, which is cumulative since launch.
+
+Measured 2026-10-17 (M5, macOS 27, settled): footprint 13 MB, CPU 0.000%, **1.0 idle wakeups/s**, power 0.000.
 
 - [ ] **Step 8: Commit**
 
@@ -1552,11 +1554,11 @@ git commit -m "feat: show live CPU, GPU and memory in the menu bar"
 
 ```bash
 PID=$(pgrep -x wisp)
-top -l 300 -s 2 -pid "$PID" -stats pid,cpu,idlew,power | awk '$1==pid {c+=$2; w+=$3; p+=$4; n++} END {printf "avg cpu %.3f%%  idle wakeups %.2f/s  power %.3f  (%d samples)\n", c/n, w/n/2, p/n, n}' pid="$PID"
+top -l 300 -s 2 -pid "$PID" -stats pid,cpu,idlew,power | awk '$1==pid && seen++ {c+=$2; w+=$3; p+=$4; n++} END {printf "avg cpu %.3f%%  idle wakeups %.2f/s  power %.3f  (%d samples)\n", c/n, w/n/2, p/n, n}' pid="$PID"
 footprint "$PID" | head -n 5
 ```
 
-Expected: average CPU < 0.1%; phys footprint < 15 MB; about 0.5 idle wakeups/s (one per 2 s tick). Compare footprint with the Task 1 floor. (`top`'s first sample is cumulative — with 300 samples it does not move the average meaningfully; drop it if borderline.) Run the same command against Stats (`pgrep -x Stats`) for S5: CPU will round near zero for both, so wakeups and power are the comparison that matters.
+Expected: average CPU < 0.1%; phys footprint < 15 MB; idle wakeups ≤ the Task 1 floor + ~0.5/s (one per 2 s tick), i.e. ≈ 1.5/s. Compare footprint with the Task 1 floor (13 MB). Run the same command against Stats (`pgrep -x Stats`) for S5: CPU will round near zero for both, so power is the comparison that matters (Stats' `idlew` read back implausibly large on macOS 27; record it but don't rely on it).
 
 - [ ] **Step 1b: App Nap** — during the same 10 minutes, keep another app frontmost and glance at the menu bar: values must still change every ~2 s. If they stall, App Nap is throttling the timer; only then hold an `NSProcessInfo` activity (`beginActivityWithOptions_reason`) for the app's lifetime and re-measure, since it can raise wakeups.
 
