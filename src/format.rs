@@ -33,11 +33,13 @@ pub fn percent(value: Option<f64>) -> String {
 }
 
 /// Bytes as GB (binary, as Activity Monitor counts) with at most one decimal.
+#[allow(dead_code)] // Dropdown formatter: the menu feature displays it; tested here so the rule is fixed now.
 pub fn size(bytes: u64) -> String {
     format!("{} GB", one_decimal(bytes as f64 / GIB))
 }
 
 /// "used / total GB", e.g. "19.5 / 32 GB".
+#[allow(dead_code)] // Dropdown formatter: the menu feature displays it; tested here so the rule is fixed now.
 pub fn size_of_total(used: u64, total: u64) -> String {
     format!(
         "{} / {} GB",
@@ -47,6 +49,7 @@ pub fn size_of_total(used: u64, total: u64) -> String {
 }
 
 /// Throughput with the shortest sensible unit: whole B/s and KB/s, one decimal for MB/s and GB/s.
+#[allow(dead_code)] // Dropdown formatter: the menu feature displays it; tested here so the rule is fixed now.
 pub fn rate(bytes_per_sec: f64) -> String {
     const UNITS: [&str; 4] = ["B/s", "KB/s", "MB/s", "GB/s"];
     let mut v = bytes_per_sec.max(0.0);
@@ -64,6 +67,7 @@ pub fn rate(bytes_per_sec: f64) -> String {
 }
 
 /// The pressure level's label.
+#[allow(dead_code)] // Dropdown formatter: the menu feature displays it; tested here so the rule is fixed now.
 pub fn pressure(p: Option<Pressure>) -> &'static str {
     match p {
         Some(Pressure::Normal) => "Normal",
