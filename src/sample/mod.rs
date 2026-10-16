@@ -2,6 +2,8 @@
 
 mod cpu;
 mod mem;
+mod net;
 mod sys;
 
 pub use mem::{Memory, Pressure, Swap};
+pub use net::Net;
