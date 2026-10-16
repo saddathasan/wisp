@@ -1,5 +1,5 @@
 //! Thin safe wrappers over the raw sysctl and Mach calls the readers share.
-// libc marks its Mach calls deprecated in favour of mach2; we need only two, and they are stable.
+// libc marks mach_host_self deprecated in favour of mach2; it is a stable Mach call.
 #![allow(deprecated)]
 
 use std::ffi::CStr;
