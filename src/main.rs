@@ -14,6 +14,7 @@ use objc2_foundation::{NSNotification, NSObject, NSObjectProtocol, ns_string};
 
 mod format;
 mod sample;
+mod ui;
 
 /// State the delegate keeps alive for the app's lifetime.
 #[derive(Default)]
