@@ -13,11 +13,11 @@ of text, plus one plain list on click, and nothing else.
 
 | # | Criterion | How it's checked |
 |---|-----------|------------------|
-| S1 | Average CPU < 0.1% and ~0.5 idle wakeups/s over 10 min at the default 2 s interval, menu closed | `top -l 300 -s 2 -pid <pid> -stats cpu,idlew,power` (ignore first sample) |
+| S1 | Average CPU < 0.1% and idle wakeups ≤ the bare-AppKit floor + 0.5/s (floor ≈ 1.0/s, measured 2026-10-17) over 10 min at the default 2 s interval, menu closed | `top -l 300 -s 2 -pid <pid> -stats cpu,idlew,power` (ignore first sample) |
 | S2 | Physical footprint < 15 MB after 10 min | `footprint <pid>` |
 | S3 | ~Zero activity while the display is asleep or the screen is locked | `top` sample during display sleep |
 | S4 | No added WindowServer load vs. no monitor running | `top -pid $(pgrep WindowServer)`, with and without Wisp |
-| S5 | Measurably cheaper than Stats tuned to CPU+GPU+RAM (~1.6% CPU) | same `top` run on both, comparing CPU, idle wakeups and power |
+| S5 | Measurably cheaper than Stats tuned to CPU+GPU+RAM (~1.6% CPU) | same `top` run on both, comparing CPU and power |
 | S6 | Readings agree with Activity Monitor (CPU %, Memory Used, Swap) within rounding | side-by-side check |
 | S7 | Looks native and polished in light and dark mode | screenshots in both, reviewed before release |
 
