@@ -1,5 +1,4 @@
 //! CPU busy percentage from the kernel's cumulative per-state tick counters.
-#![allow(deprecated)] // libc's host_statistics is marked deprecated in favour of mach2; it is stable.
 
 use std::mem::MaybeUninit;
 
