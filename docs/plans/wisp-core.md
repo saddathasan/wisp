@@ -1574,3 +1574,29 @@ Note: the kernel publishes idle CPU ticks up to ~1 s apart on macOS 27, so the s
 - [ ] **Step 5: Open PRs**
 
 PR `ms/3-live-title → feat/core` (self-merge on green), then PR `feat/core → main` with the measurements; review it and merge (merge access granted 2026-10-17).
+
+
+---
+
+### Task 10: Redraw hysteresis (decision 2026-10-17)
+
+**Why:** Task 9 measured ~14 ms of CPU per title change — AppKit re-renders the status item for each display — while sampling and the timer cost 0.017%. CPU % jitters by a point or two almost every tick, so "redraw only on change" still redrew nearly every tick (~0.7% CPU). The user chose hysteresis at the 2 s interval over a longer interval.
+
+**Branch:** `ms/4-redraw-hysteresis` off `feat/core`.
+
+**Rule:** redraw only when a reading appears or disappears, or any value has moved **≥ 2 points from the value currently shown** (not from the last sample — slow drift still shows once it adds up to 2 points).
+
+**Files:** Modify `src/format.rs`, `src/ui/status.rs`, `src/main.rs`.
+
+**Interfaces:**
+- `format::Values = [Option<f64>; 3]` — CPU, GPU, MEM percentages as shown on the bar.
+- `format::values(&Snapshot) -> Values`
+- `format::moved(shown: &Values, now: &Values) -> bool` — the rule above; `HYSTERESIS: f64 = 2.0`.
+- `format::status(&Values) -> StatusLine` (was `&Snapshot`).
+- `StatusItem::show(&self, mtm, values: Values)` keeps the last *drawn* `Values`; first call always draws.
+- `tick()` passes `format::values(&snapshot)`.
+
+- [ ] **Step 1: Failing tests in `format.rs`:** no move below 2 points (12.0 → 13.9); move at exactly 2 (12.0 → 14.0) and downward (12.0 → 10.0); any single field crossing triggers; `Some` ↔ `None` on any field triggers; drift is measured from the shown value (shown 12.0, now 13.0 → false; shown still 12.0, now 14.1 → true); update the existing `status_line_...` test for the new signature.
+- [ ] **Step 2:** Run, see them fail. **Step 3:** Implement. **Step 4:** Gate green.
+- [ ] **Step 5: Commit** `feat(ui): redraw the menu bar only when a value moves two points`
+- [ ] **Step 6: Re-measure** with `scripts/measure.sh "$(pgrep -x wisp)" 600` (menu closed) and the same on Stats; record in the PR.

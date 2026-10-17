@@ -1,5 +1,5 @@
-//! The menu bar item: draws the CPU / GPU / MEM line and skips the redraw when the text is unchanged.
-//! Every title change costs WindowServer a re-composite, so unchanged ticks must cost nothing.
+//! The menu bar item: draws the CPU / GPU / MEM line, redrawing only when a value has moved enough to matter.
+//! Every title change costs ~14 ms of AppKit rendering, so ticks that only jitter must cost nothing.
 
 use std::cell::RefCell;
 
@@ -14,12 +14,12 @@ use objc2_foundation::{
     NSAttributedString, NSAttributedStringKey, NSDictionary, NSMutableAttributedString, NSString,
 };
 
-use crate::format::StatusLine;
+use crate::format::{self, StatusLine, Values};
 
-/// Owns the status item and the last line drawn into it.
+/// Owns the status item and the values last drawn into it.
 pub struct StatusItem {
     item: Retained<NSStatusItem>,
-    last: RefCell<Option<StatusLine>>,
+    shown: RefCell<Option<Values>>,
 }
 
 impl StatusItem {
@@ -29,19 +29,22 @@ impl StatusItem {
         item.setMenu(Some(menu));
         Self {
             item,
-            last: RefCell::new(None),
+            shown: RefCell::new(None),
         }
     }
 
-    /// Draws `line` unless it is identical to what is already shown.
-    pub fn show(&self, mtm: MainThreadMarker, line: StatusLine) {
-        if self.last.borrow().as_ref() == Some(&line) {
+    /// Draws `values` on the first call and afterwards only when they have moved from what is on screen.
+    pub fn show(&self, mtm: MainThreadMarker, values: Values) {
+        // Compared with the drawn values, not the previous sample, so slow drift still shows once it adds up.
+        if let Some(shown) = self.shown.borrow().as_ref()
+            && !format::moved(shown, &values)
+        {
             return;
         }
         if let Some(button) = self.item.button(mtm) {
-            button.setAttributedTitle(&attributed(&line));
+            button.setAttributedTitle(&attributed(&format::status(&values)));
         }
-        *self.last.borrow_mut() = Some(line);
+        *self.shown.borrow_mut() = Some(values);
     }
 }
 
