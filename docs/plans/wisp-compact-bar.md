@@ -43,9 +43,9 @@
 
 ## Milestone 2 — `ms/2-acceptance`: prove it
 
-- [ ] **Task 4: forced redraw cost.** Temporary patch alternating CPU between 11 and 88 every tick; 20 s settle, 120 s `scripts/measure.sh`, report ms CPU per redraw. Target **≤ 2 ms**.
-- [ ] **Task 5: real 10-minute run next to Stats.** Bundled release build, 20 s settle, `scripts/measure.sh <pid> 600` on Wisp and Stats over the same window. Targets **≤ 0.1% CPU** and **footprint ≤ 15 MB**.
-- [ ] **Task 6: looks.** Screenshots of the real item in dark and light (force the item's appearance in a temporary patch if the wallpaper keeps the bar dark); width measured from the item's window, ~130 pt and the same at `0%`/`100%`/missing; values visibly change over a few minutes; no light-colour flash on the first frame (screenshot right after launch).
-- [ ] **Task 7: record.** Measured numbers and screenshots' findings into spec §1 (and this plan), with machine and macOS version.
+- [x] **Task 4: forced redraw cost.** Temporary patch alternating CPU between 11 and 88 every tick; 20 s settle, 120 s `scripts/measure.sh`, report ms CPU per redraw. Target **≤ 2 ms**. *0.84–1.16 ms in six steady-state runs; the two early high runs coincided with a first menu open (spec §1, Measured).*
+- [x] **Task 5: real 10-minute run next to Stats.** Bundled release build, 20 s settle, `scripts/measure.sh <pid> 600` on Wisp and Stats over the same window. Targets **≤ 0.1% CPU** and **footprint ≤ 15 MB**.
+- [x] **Task 6: looks.** Screenshots of the real item in dark and light (force the item's appearance in a temporary patch if the wallpaper keeps the bar dark); width measured from the item's window, ~130 pt and the same at `0%`/`100%`/missing; values visibly change over a few minutes; no light-colour flash on the first frame (screenshot right after launch).
+- [x] **Task 7: record.** Measured numbers and screenshots' findings into spec §1 (and this plan), with machine and macOS version.
 
 **Acceptance:** every target above met. A missed target is profiled (`sample <pid> 20`) and its cause fixed before the milestone merges — targets are never relaxed.
