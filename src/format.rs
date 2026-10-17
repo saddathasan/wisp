@@ -44,10 +44,9 @@ pub fn status(v: &Values) -> StatusLine {
 
 /// A whole-number percentage padded to three digit-widths, e.g. "  3%"; missing is "  ‒%".
 pub fn percent(value: Option<f64>) -> String {
-    let pad = |s: String| s.replace(' ', &FIGURE_SPACE.to_string());
     match value {
-        // NaN clamps to NaN and `as u32` maps it to 0.
-        Some(v) => pad(format!("{:>3}%", v.round().clamp(0.0, 100.0) as u32)),
+        // NaN clamps to NaN and `as u32` maps it to 0. The fill character is U+2007 (FIGURE_SPACE).
+        Some(v) => format!("{:\u{2007}>3}%", v.round().clamp(0.0, 100.0) as u32),
         None => format!("{FIGURE_SPACE}{FIGURE_SPACE}{FIGURE_DASH}%"),
     }
 }
