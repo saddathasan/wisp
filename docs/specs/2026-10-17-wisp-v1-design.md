@@ -31,7 +31,7 @@ menu bar item, plus one plain list on click, and nothing else.
 - **S8:** CPU time ÷ 60 redraws over 120 s, interleaved with the unpatched build. Steady state: forced 0.84, 0.84, 0.84 and 1.00 ms per redraw, unpatched 0.50–0.84 ms per tick (sampling plus noise), so a redraw adds ~0.3–0.5 ms. A re-check read 1.16 and 1.16 ms. The first set read 4.3 and 2.5 ms forced and coincided with the footprint step of a first menu open (19 MB) and the item moving; it never reproduced in six later runs. `sample` in steady state shows only the timer's Core Animation commit.
 - **S9:** the accessibility frame is 130 × 24 pt at `0%`, `100%` and `‒`, and on the real build.
 - **S7:** dark: white labels and values, no light flash in 24 screenshots over the 2.8 s after launch. The item fades in white. With the system in light mode the bar stays dark over this wallpaper and the item stays white. With the button forced to Aqua, the labels and values turn dark. A genuinely light bar was not available on this setup.
-- **Two displays (out of scope for v1):** the dimmed copy of the item on the inactive display only refreshes when something else redraws the bar. It sat on stale values for minutes while Stats' copy kept updating. On the active display the item updates every tick.
+- **Two displays:** the inactive display's copy refreshes every ~30 s while values move (§3.1); before that it sat on stale values for minutes. With the sync on, Wisp read `cpu 0.085%`, 14.4 MiB against Stats' 1.988% ([run](../benchmarks/runs/2026-10-18-7d7bf25.md)); the extra ~0.05% is one ~14 ms button render per 30 s. On the active display the item updates every tick.
 
 ## 2. Scope
 
@@ -59,7 +59,10 @@ left to right.
   content (`100%` or the label), so the item is a constant ~130 pt and never nudges its neighbours.
 - Values are unpadded (`7%`, `42%`, `100%`); a missing reading is a figure dash `‒` (U+2012).
 - Drawn by six text layers in a layer-hosting view inside the status item button: a redraw only
-  swaps layer strings, so AppKit never re-renders the button (~14 ms each time it does).
+  swaps layer strings, so a value change never re-renders the button (~14 ms each time it does).
+- With two or more displays, the inactive display's dimmed copy is a snapshot AppKit takes of the
+  button; after a value change Wisp dirties the button to refresh it at most once every 30 s, and
+  never with one display (decision 2026-10-18, inactive-display sync).
 - Layer colours cannot follow dynamic system colours, so they are resolved to sRGB and re-resolved
   when the view enters the menu bar window, when the bar's appearance changes and when the display
   scale changes. Clicks fall through the view to the button, which opens the dropdown.
