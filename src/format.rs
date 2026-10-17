@@ -13,12 +13,32 @@ const GIB: f64 = (1u64 << 30) as f64;
 /// The menu bar's (label, value) pairs in display order.
 pub type StatusLine = [(&'static str, String); 3];
 
+/// CPU, GPU and MEM percentages, the numbers behind the menu bar line.
+pub type Values = [Option<f64>; 3];
+
+/// Points a value must move from the one on screen before the bar is redrawn (decision 2026-10-17 / plan Task 10).
+/// Each title change costs ~14 ms of AppKit rendering, and CPU % jitters a point or two every tick.
+pub const HYSTERESIS: f64 = 2.0;
+
+/// The menu bar's values from a sample.
+pub fn values(s: &Snapshot) -> Values {
+    [s.cpu, s.gpu, s.mem.map(|m| m.percent())]
+}
+
+/// Whether `now` differs enough from the `shown` values to be worth a redraw.
+pub fn moved(shown: &Values, now: &Values) -> bool {
+    shown.iter().zip(now).any(|pair| match pair {
+        (Some(a), Some(b)) => (a - b).abs() >= HYSTERESIS,
+        (a, b) => a.is_some() != b.is_some(),
+    })
+}
+
 /// The CPU / GPU / MEM pairs for the menu bar.
-pub fn status(s: &Snapshot) -> StatusLine {
+pub fn status(v: &Values) -> StatusLine {
     [
-        ("CPU", percent(s.cpu)),
-        ("GPU", percent(s.gpu)),
-        ("MEM", percent(s.mem.map(|m| m.percent()))),
+        ("CPU", percent(v[0])),
+        ("GPU", percent(v[1])),
+        ("MEM", percent(v[2])),
     ]
 }
 
@@ -155,9 +175,47 @@ mod tests {
             }),
             ..Snapshot::default()
         };
-        let line = status(&snap);
+        let line = status(&values(&snap));
         assert_eq!(line[0], ("CPU", "\u{2007}12%".to_string()));
         assert_eq!(line[1], ("GPU", "\u{2007}\u{2007}\u{2012}%".to_string()));
         assert_eq!(line[2], ("MEM", "\u{2007}61%".to_string()));
+    }
+
+    #[test]
+    fn no_move_below_two_points() {
+        assert!(!moved(&[Some(12.0); 3], &[Some(13.9); 3]));
+    }
+
+    #[test]
+    fn moving_two_points_either_way_counts() {
+        assert!(moved(&[Some(12.0); 3], &[Some(14.0); 3]));
+        assert!(moved(&[Some(12.0); 3], &[Some(10.0); 3]));
+    }
+
+    #[test]
+    fn any_single_field_crossing_counts() {
+        let shown = [Some(12.0), Some(3.0), Some(61.0)];
+        assert!(moved(&shown, &[Some(14.5), Some(3.0), Some(61.0)]));
+        assert!(moved(&shown, &[Some(12.0), Some(5.0), Some(61.0)]));
+        assert!(moved(&shown, &[Some(12.0), Some(3.0), Some(58.0)]));
+    }
+
+    #[test]
+    fn a_reading_appearing_or_disappearing_counts() {
+        let shown = [Some(12.0), Some(3.0), Some(61.0)];
+        for i in 0..3 {
+            let mut gone = shown;
+            gone[i] = None;
+            assert!(moved(&shown, &gone), "field {i} disappearing");
+            assert!(moved(&gone, &shown), "field {i} appearing");
+        }
+        assert!(!moved(&[None; 3], &[None; 3]));
+    }
+
+    #[test]
+    fn drift_is_measured_from_the_shown_value() {
+        let shown = [Some(12.0); 3];
+        assert!(!moved(&shown, &[Some(13.0); 3]));
+        assert!(moved(&shown, &[Some(14.1); 3]));
     }
 }
