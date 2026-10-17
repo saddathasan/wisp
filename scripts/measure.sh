@@ -13,4 +13,4 @@ sleep "$SECS"
 c1=$(cpu); w1=$(wakeups)
 awk -v c0="$c0" -v c1="$c1" -v w0="$w0" -v w1="$w1" -v s="$SECS" \
   'BEGIN { printf "cpu %.3f%%  idle wakeups %.2f/s  over %d s\n", (c1 - c0) / s * 100, (w1 - w0) / s, s }'
-footprint "$PID" | grep 'Footprint:'
+footprint -f bytes "$PID" | grep 'Footprint:'
