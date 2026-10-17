@@ -51,6 +51,14 @@ pub fn percent(value: Option<f64>) -> String {
     }
 }
 
+/// EXPERIMENT (WISP_COMPACT): an unpadded whole percentage, e.g. "7%"; missing is a digit-wide dash.
+pub fn compact(value: Option<f64>) -> String {
+    match value {
+        Some(v) => format!("{}%", v.round().clamp(0.0, 100.0) as u32),
+        None => FIGURE_DASH.to_string(),
+    }
+}
+
 /// Bytes as GB (binary, as Activity Monitor counts) with at most one decimal.
 #[allow(dead_code)] // Dropdown formatter: the menu feature displays it; tested here so the rule is fixed now.
 pub fn size(bytes: u64) -> String {
@@ -135,6 +143,13 @@ mod tests {
         assert_eq!(percent(None), "\u{2007}\u{2007}\u{2012}%");
         assert_eq!(percent(None).chars().count(), 4);
         assert_eq!(pressure(None), MISSING);
+    }
+
+    #[test]
+    fn compact_values_are_unpadded() {
+        assert_eq!(compact(Some(7.4)), "7%");
+        assert_eq!(compact(Some(150.0)), "100%");
+        assert_eq!(compact(None), "\u{2012}");
     }
 
     #[test]

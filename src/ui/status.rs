@@ -7,7 +7,7 @@ use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, class, define_class, msg_send};
 use objc2_app_kit::{
-    NSAppearance, NSAppearanceCustomization, NSAttributedStringNSStringDrawing, NSAutoresizingMaskOptions, NSBitmapImageRep, NSColor, NSDeviceRGBColorSpace,
+    NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAttributedStringNSStringDrawing, NSAutoresizingMaskOptions, NSBitmapImageFileType, NSBitmapImageRep, NSColor, NSDeviceRGBColorSpace,
     NSFont, NSFontAttributeName, NSFontWeightRegular, NSForegroundColorAttributeName,
     NSGraphicsContext, NSImage, NSMenu, NSStatusBar, NSStatusItem, NSVariableStatusItemLength,
     NSView,
@@ -41,6 +41,7 @@ define_class!(
     }
 );
 
+use super::compact::CompactView;
 use crate::format::{self, StatusLine, Values};
 
 /// Owns the status item and the values last drawn into it.
@@ -53,6 +54,7 @@ pub struct StatusItem {
     image: bool,
     layer: Option<Retained<AnyObject>>,
     view: Option<Retained<TextView>>,
+    compact: Option<Retained<CompactView>>,
 }
 
 impl StatusItem {
@@ -83,7 +85,15 @@ impl StatusItem {
             button.addSubview(&v);
             v
         });
+        let compact = flag("WISP_COMPACT").then(|| {
+            let v = CompactView::new(_mtm, button.bounds().size.height);
+            v.setAutoresizingMask(NSAutoresizingMaskOptions::ViewHeightSizable);
+            item.setLength(v.frame().size.width);
+            button.addSubview(&v);
+            v
+        });
         Self {
+            compact,
             item,
             shown: Cell::new(None),
             tick: Cell::new(0),
@@ -101,6 +111,11 @@ impl StatusItem {
             // Alternate CPU far apart so every tick is a visible change.
             let t = self.tick.get();
             values[0] = Some(if t % 2 == 0 { 11.0 } else { 88.0 });
+            if t == 4 && flag("WISP_FLIP") {
+                // Flip the item to light (Aqua) mid-run: the menu bar follows the wallpaper, not the system mode.
+                let aqua = NSAppearance::appearanceNamed(unsafe { NSAppearanceNameAqua });
+                self.item.button(mtm).unwrap().setAppearance(aqua.as_deref());
+            }
             self.tick.set(t + 1);
         }
         // Compared with the drawn values, not the previous sample, so slow drift still shows once it adds up.
@@ -118,7 +133,9 @@ impl StatusItem {
                 let _: () = unsafe { msg_send![cat, begin] };
                 let _: () = unsafe { msg_send![cat, setDisableActions: true] };
             }
-            if let Some(tl) = &self.layer {
+            if let Some(v) = &self.compact {
+                v.set(values.map(format::compact));
+            } else if let Some(tl) = &self.layer {
                 let b = button.bounds();
                 let h = text.size().height.ceil();
                 let want = NSRect::new(NSPoint::new(0.0, ((b.size.height - h) / 2.0).round()), NSSize::new(b.size.width, h));
@@ -144,12 +161,26 @@ impl StatusItem {
             if self.catx {
                 let _: () = unsafe { msg_send![cat, commit] };
             }
+            if let Some(dir) = std::env::var_os("WISP_SNAP") {
+                snap(&button, std::path::Path::new(&dir));
+            }
             if flag("WISP_DEBUG") {
                 eprintln!("button {:?} text {:?}", button.frame(), text.size());
             }
         }
         self.shown.set(Some(values));
     }
+}
+
+/// EXPERIMENT: writes the button as AppKit itself renders it (the replicant path) to `dir/snap-<secs>.png`,
+/// so the item can be inspected while the menu bar hides it behind the notch.
+fn snap(button: &NSView, dir: &std::path::Path) {
+    let b = button.bounds();
+    let Some(rep) = button.bitmapImageRepForCachingDisplayInRect(b) else { return };
+    button.cacheDisplayInRect_toBitmapImageRep(b, &rep);
+    let Some(png) = (unsafe { rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new()) }) else { return };
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let _ = std::fs::write(dir.join(format!("snap-{secs}.png")), png.to_vec());
 }
 
 /// Labels in the secondary label colour, values in the primary one, all with monospaced digits.
@@ -190,7 +221,7 @@ fn image(text: &NSAttributedString, appearance: &NSAppearance) -> Retained<NSIma
     img
 }
 
-fn attributes(
+pub(super) fn attributes(
     font: &NSFont,
     color: &NSColor,
 ) -> Retained<NSDictionary<NSAttributedStringKey, AnyObject>> {
