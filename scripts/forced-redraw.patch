@@ -1,0 +1,17 @@
+diff --git a/src/ui/status.rs b/src/ui/status.rs
+index 2cdff35..9980a12 100644
+--- a/src/ui/status.rs
++++ b/src/ui/status.rs
+@@ -59,7 +59,11 @@ impl StatusItem {
+     }
+ 
+     /// Draws `values` on the first call and afterwards only when they have moved from what is on screen.
+-    pub fn show(&self, values: Values) {
++    pub fn show(&self, mut values: Values) {
++        // MEASUREMENT ONLY (scripts/forced-redraw.patch, S8): alternate CPU 11/88 so every tick redraws.
++        static ODD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
++        let odd = ODD.fetch_xor(true, std::sync::atomic::Ordering::Relaxed);
++        values[0] = Some(if odd { 88.0 } else { 11.0 });
+         // Compared with the drawn values, not the previous sample, so slow drift still shows once it adds up.
+         if self
+             .shown
