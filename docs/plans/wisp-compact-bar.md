@@ -35,9 +35,9 @@
 
 ## Milestone 1 — `ms/1-layer-bar`: the layer-rendered compact item
 
-- [ ] **Task 1 (TDD): unpadded percent.** In `src/format.rs` replace `percent` (padded) and `status`/`StatusLine` with an unpadded `percent(Option<f64>) -> String`: `7.4 → "7%"`, `150 → "100%"`, `-2 → "0%"`, NaN → `"0%"`, `None → "‒"`. Update the tests (seen red first); drop `FIGURE_SPACE` if nothing else uses it.
-- [ ] **Task 2: compact view.** Port `CompactView` into `src/ui/status.rs` (one file for the item; delete the attributed-title code): six CATextLayers in a layer-hosting view, value-only updates in a disabled-actions transaction, one resolved primary colour for labels and values, restyle on move-to-window / appearance / backing changes. `StatusItem::new` sets the item length to the view width and adds the view to the button; `show` keeps the hysteresis and calls the view's `set`. The button carries an accessibility label so VoiceOver still names the item.
-- [ ] **Task 3: spec.** Rewrite spec §3.1 for the new look, update §4's `status.rs` line, and add the redraw cost and width to §1's criteria (forced redraw ≤ 2 ms; constant ~130 pt width).
+- [x] **Task 1 (TDD): unpadded percent.** In `src/format.rs` replace `percent` (padded) and `status`/`StatusLine` with an unpadded `percent(Option<f64>) -> String`: `7.4 → "7%"`, `150 → "100%"`, `-2 → "0%"`, NaN → `"0%"`, `None → "‒"`. Update the tests (seen red first); drop `FIGURE_SPACE` if nothing else uses it.
+- [x] **Task 2: compact view.** Port `CompactView` into `src/ui/status.rs` (one file for the item; delete the attributed-title code): six CATextLayers in a layer-hosting view, value-only updates in a disabled-actions transaction, one resolved primary colour for labels and values, restyle on move-to-window / appearance / backing changes. `StatusItem::new` sets the item length to the view width and adds the view to the button; `show` keeps the hysteresis and calls the view's `set`. The button carries an accessibility label so VoiceOver still names the item.
+- [x] **Task 3: spec.** Rewrite spec §3.1 for the new look, update §4's `status.rs` line, and add the redraw cost and width to §1's criteria (forced redraw ≤ 2 ms; constant ~130 pt width).
 
 **Acceptance:** gate green; the bundled app shows the two-line item; the menu still opens on click.
 
