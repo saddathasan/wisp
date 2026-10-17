@@ -1,7 +1,7 @@
 //! The menu bar item: draws the CPU / GPU / MEM line, redrawing only when a value has moved enough to matter.
 //! Every title change costs ~14 ms of AppKit rendering, so ticks that only jitter must cost nothing.
 
-use std::cell::RefCell;
+use std::cell::Cell;
 
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
@@ -19,7 +19,7 @@ use crate::format::{self, StatusLine, Values};
 /// Owns the status item and the values last drawn into it.
 pub struct StatusItem {
     item: Retained<NSStatusItem>,
-    shown: RefCell<Option<Values>>,
+    shown: Cell<Option<Values>>,
 }
 
 impl StatusItem {
@@ -29,22 +29,24 @@ impl StatusItem {
         item.setMenu(Some(menu));
         Self {
             item,
-            shown: RefCell::new(None),
+            shown: Cell::new(None),
         }
     }
 
     /// Draws `values` on the first call and afterwards only when they have moved from what is on screen.
     pub fn show(&self, mtm: MainThreadMarker, values: Values) {
         // Compared with the drawn values, not the previous sample, so slow drift still shows once it adds up.
-        if let Some(shown) = self.shown.borrow().as_ref()
-            && !format::moved(shown, &values)
+        if self
+            .shown
+            .get()
+            .is_some_and(|shown| !format::moved(&shown, &values))
         {
             return;
         }
         if let Some(button) = self.item.button(mtm) {
             button.setAttributedTitle(&attributed(&format::status(&values)));
         }
-        *self.shown.borrow_mut() = Some(values);
+        self.shown.set(Some(values));
     }
 }
 
