@@ -23,6 +23,15 @@ menu bar item, plus one plain list on click, and nothing else.
 | S8 | A forced redraw (a visible value change every tick) costs ≤ 2 ms CPU | temporary patch alternating CPU 11/88, `scripts/measure.sh <pid> 120`, CPU time ÷ redraws |
 | S9 | The menu bar item is a constant ~130 pt wide, the same at `0%`, `100%` and missing | width of the item's window or accessibility frame |
 
+**Measured (2026-10-18, compact bar, Apple M5, macOS 27.0.1; built-in 2560×1664 Retina with notch plus a 3440×1440 external display, extended):**
+
+- **S1, S5:** 10 min side by side, bundled release build after a 20 s settle: Wisp `cpu 0.027%`, Stats `cpu 2.143%`.
+- **S2:** Wisp 14.6 MiB after 10 min (`footprint` prints `15 MB`, 15,270,728 B; peak 15.5 MiB; 14.0 MiB a minute after launch), Stats 135 MB. A thin margin, but no growth: `leaks` stays at 416 leaks / 19.9 KB (from launch) a minute later.
+- **S8:** CPU time ÷ 60 redraws over 120 s, interleaved with the unpatched build. Steady state: forced 0.84, 0.84, 0.84 and 1.00 ms per redraw, unpatched 0.50–0.84 ms per tick (sampling plus noise), so a redraw adds ~0.3–0.5 ms. The first set read 4.3 and 2.5 ms forced (unpatched 0.66 and 0.50) and did not reproduce in four later runs. `sample` in steady state shows only the timer's Core Animation commit.
+- **S9:** the accessibility frame is 130 × 24 pt at `0%`, `100%` and `‒`, and on the real build.
+- **S7:** dark: white labels and values, no light flash in 24 screenshots over the 2.8 s after launch. The item fades in white. With the system in light mode the bar stays dark over this wallpaper and the item stays white. With the button forced to Aqua, the labels and values turn dark. A genuinely light bar was not available on this setup.
+- **Two displays (out of scope for v1):** the dimmed copy of the item on the inactive display only refreshes when something else redraws the bar. It sat on stale values for minutes while Stats' copy kept updating. On the active display the item updates every tick.
+
 ## 2. Scope
 
 **v1:** CPU %, GPU %, RAM % in the menu bar; CPU, GPU, memory breakdown, memory pressure, swap and
