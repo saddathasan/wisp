@@ -109,6 +109,10 @@ fn quit_menu(mtm: MainThreadMarker) -> Retained<NSMenu> {
 
 fn main() {
     let mtm = MainThreadMarker::new().expect("Wisp must start on the main thread");
+    if std::env::var_os("WISP_BG").is_some() {
+        // EXPERIMENT: whole process at background (E-core, throttled) priority.
+        unsafe { libc::setpriority(libc::PRIO_DARWIN_PROCESS, 0, libc::PRIO_DARWIN_BG) };
+    }
     let app = NSApplication::sharedApplication(mtm);
     // LSUIElement covers the bundled app; this also keeps `cargo run` out of the Dock.
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
