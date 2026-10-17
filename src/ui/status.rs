@@ -128,6 +128,12 @@ impl CompactView {
             .fold(width_of("100%", &value), f64::max)
             .ceil();
         let root: Retained<AnyObject> = unsafe { msg_send![class!(CALayer), layer] };
+        // Redraws that commit inside AppKit's own transaction (display changes) escape `transaction()` and would
+        // cross-fade, showing the old-scale bitmap at double or half size across a backing-scale change.
+        let no_fade = unsafe {
+            let null: Retained<AnyObject> = msg_send![class!(NSNull), null];
+            NSDictionary::<NSString, AnyObject>::from_slices(&[ns_string!("contents")], &[&*null])
+        };
         let layers = (0..6)
             .map(|i| {
                 let tl: Retained<AnyObject> = unsafe { msg_send![class!(CATextLayer), layer] };
@@ -139,6 +145,7 @@ impl CompactView {
                     let _: () = msg_send![&*root, addSublayer: &*tl];
                     let _: () = msg_send![&*tl, setBounds: NSRect::new(NSPoint::ZERO, size)];
                     let _: () = msg_send![&*tl, setAnchorPoint: NSPoint::ZERO];
+                    let _: () = msg_send![&*tl, setActions: &*no_fade];
                     let _: () = msg_send![&*tl, setPosition: NSPoint::new(x, 0.0)];
                 }
                 tl
