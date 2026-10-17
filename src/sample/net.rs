@@ -59,7 +59,9 @@ pub fn read() -> Option<Counters> {
     if rc != 0 {
         return None;
     }
-    let mut buf = vec![0u8; len];
+    // Headroom: an interface appearing between the two calls would otherwise fail the second with ENOMEM.
+    let mut buf = vec![0u8; len + len / 8];
+    len = buf.len();
     let rc = unsafe {
         libc::sysctl(
             mib.as_mut_ptr(),
