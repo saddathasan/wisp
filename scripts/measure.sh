@@ -4,7 +4,9 @@
 set -eu
 PID=${1:?usage: measure.sh <pid> [seconds]}
 SECS=${2:-60}
-cpu() { ps -o cputime= -p "$PID" | awk -F'[:.]' '{ print $1 * 60 + $2 + $3 / 100 }'; }
+# macOS prints cputime as M:SS.cc with unbounded minutes (2763:15.73, never H:MM:SS); printf, because
+# awk's default %.6g output drops the centiseconds once a long-running process passes 10,000 s.
+cpu() { ps -o cputime= -p "$PID" | awk -F'[:.]' '{ printf "%.2f", $1 * 60 + $2 + $3 / 100 }'; }
 wakeups() { top -l 1 -pid "$PID" -stats idlew | tail -n 1 | tr -d '+ '; }
 c0=$(cpu); w0=$(wakeups)
 sleep "$SECS"
