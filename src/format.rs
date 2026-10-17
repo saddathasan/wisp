@@ -9,11 +9,11 @@ pub const MISSING: &str = "—";
 const FIGURE_DASH: &str = "\u{2012}";
 const GIB: f64 = (1u64 << 30) as f64;
 
-/// CPU, GPU and MEM percentages, the numbers behind the menu bar line.
+/// CPU, GPU and MEM percentages, the numbers behind the menu bar item.
 pub type Values = [Option<f64>; 3];
 
 /// Points a value must move from the one on screen before the bar is redrawn (decision 2026-10-17 / plan Task 10).
-/// Each title change costs ~14 ms of AppKit rendering, and CPU % jitters a point or two every tick.
+/// CPU % jitters a point or two every tick; redrawing on that noise is wasted work.
 pub const HYSTERESIS: f64 = 2.0;
 
 /// The menu bar's values from a sample.
