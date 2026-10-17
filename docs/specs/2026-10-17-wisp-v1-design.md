@@ -184,7 +184,7 @@ Excluded on purpose: `sysinfo` (broad, refreshes far more than needed), `tray-ic
   `vm_statistics64`, network rate including counter reset, pressure mapping, and all formatting
   (rounding, units, dashes for missing values).
 - **Smoke test:** each sampler returns `Some` on the build machine (`cargo test`, run locally).
-- **Manual acceptance:** S1–S7 from §1, recorded in the README with the machine and macOS
+- **Manual acceptance:** S1–S9 from §1, recorded in the README with the machine and macOS
   version they were measured on.
 
 ## 6. Repository and docs
@@ -212,7 +212,7 @@ kept to about 400 changed lines. v1 is therefore split into two features:
 | `"Device Utilization %"` key changes in a future macOS | GPU shows `—`; everything else keeps working |
 | objc2 API churn between minor versions | pin versions; the AppKit surface used is small |
 | Custom menu rows cost more than expected | measured in S2; fall back to attributed titles with a no-op action |
-| Menu bar text unreadable on some wallpapers / tinted menu bars | semantic colours only; checked in S7 |
+| Menu bar text unreadable on some wallpapers / tinted menu bars | primary label colour resolved per appearance and re-resolved on change (§3.1); checked in S7 |
 | App Nap throttles the timer of a background accessory app, leaving values stale | checked during the S1 run; hold an `NSProcessInfo` activity only if values stall |
 | Launch at Login (`SMAppService`) is tied to the code signature, which every ad-hoc rebuild changes | spike it first in `feat/menu`; document re-enabling after a rebuild if needed |
 | AppKit's own floor leaves little room under the 15 MB target | footprint of the bare scaffold measured in `feat/core` Task 1, before anything else is built |
