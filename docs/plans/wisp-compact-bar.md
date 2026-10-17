@@ -49,3 +49,8 @@
 - [x] **Task 7: record.** Measured numbers and screenshots' findings into spec §1 (and this plan), with machine and macOS version.
 
 **Acceptance:** every target above met. A missed target is profiled (`sample <pid> 20`) and its cause fixed before the milestone merges — targets are never relaxed.
+
+## Milestone 6 — `ms/6-inactive-sync`: keep the inactive display's copy current
+
+- [x] **Task 8 (TDD): throttled copy refresh.** `copy_due(stale, screens, since)` in `src/ui/status.rs`; each tick, once values have changed since the last refresh, with ≥ 2 displays and ≥ 30 s (`COPY_REFRESH`) since it, dirty the button once ([[2026-10-18-inactive-display-sync]]). Dirtying the button was first shown to refresh the layer-hosting view's copy (without it the copy stayed frozen for 60 s of changing values).
+- [x] **Task 9: verify and measure.** On two displays the copy changed at 29–30 s intervals for 2 min; four focus switches showed no cross-fade or size jump. Method v1 two-display run: Wisp 0.085% CPU, 14.4 MiB; Stats 1.988% ([run](../benchmarks/runs/2026-10-18-7d7bf25.md)).

@@ -1,7 +1,8 @@
 //! The menu bar item: a small label over a bold value for CPU, GPU and MEM, drawn by six CATextLayers.
-//! A redraw only swaps layer strings, so AppKit never re-renders the status bar button (~14 ms each time it does).
+//! A redraw only swaps layer strings; the button itself (~14 ms to render) is re-rendered only to refresh other displays' copy.
 
 use std::cell::{Cell, RefCell};
+use std::time::{Duration, Instant};
 
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
@@ -9,7 +10,7 @@ use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, class, define_class,
 use objc2_app_kit::{
     NSAccessibility, NSAppearance, NSAppearanceCustomization, NSAutoresizingMaskOptions, NSColor,
     NSColorSpace, NSFont, NSFontAttributeName, NSFontWeightMedium, NSFontWeightSemibold,
-    NSForegroundColorAttributeName, NSMenu, NSStatusBar, NSStatusItem, NSStringDrawing,
+    NSForegroundColorAttributeName, NSMenu, NSScreen, NSStatusBar, NSStatusItem, NSStringDrawing,
     NSVariableStatusItemLength, NSView,
 };
 use objc2_foundation::{
@@ -28,15 +29,21 @@ const GAP: f64 = 6.0;
 const PAD: f64 = 4.0;
 /// Space between the value's cap height and the label's baseline.
 const LEADING: f64 = 2.5;
+/// Most the inactive display's copy may lag the live item. Each refresh re-renders the button (~12–15 ms), so it is
+/// capped rather than live (decision 2026-10-18-inactive-display-sync).
+const COPY_REFRESH: Duration = Duration::from_secs(30);
 
 type Attrs = Retained<NSDictionary<NSAttributedStringKey, AnyObject>>;
 
 /// Owns the status item, its view and the values last drawn into it.
 pub struct StatusItem {
-    // Held only so the item stays in the menu bar; AppKit removes it once released.
-    _item: Retained<NSStatusItem>,
+    // Also keeps the item in the menu bar; AppKit removes it once released.
+    item: Retained<NSStatusItem>,
     view: Retained<CompactView>,
     shown: Cell<Option<Values>>,
+    /// Values changed since the inactive display's copy was last refreshed.
+    copy_stale: Cell<bool>,
+    copy_at: Cell<Instant>,
 }
 
 impl StatusItem {
@@ -52,24 +59,42 @@ impl StatusItem {
         item.setLength(view.frame().size.width);
         button.addSubview(&view);
         Self {
-            _item: item,
+            item,
             view,
             shown: Cell::new(None),
+            copy_stale: Cell::new(false),
+            copy_at: Cell::new(Instant::now()),
         }
     }
 
-    /// Draws `values` on the first call and afterwards only when they have moved from what is on screen.
+    /// Draws `values` on the first call and afterwards only when they have moved from what is on screen,
+    /// then brings the inactive display's copy up to date if it is due.
     pub fn show(&self, values: Values) {
         // Compared with the drawn values, not the previous sample, so slow drift still shows once it adds up.
         if self
             .shown
             .get()
-            .is_some_and(|shown| !format::moved(&shown, &values))
+            .is_none_or(|shown| format::moved(&shown, &values))
         {
+            self.view.set(values.map(format::percent));
+            self.shown.set(Some(values));
+            self.copy_stale.set(true);
+        }
+        self.sync_copy();
+    }
+
+    /// Other displays show a bitmap AppKit takes of the button, and layer string changes never dirty it.
+    fn sync_copy(&self) {
+        let mtm = self.view.mtm();
+        let since = self.copy_at.get().elapsed();
+        if !copy_due(self.copy_stale.get(), NSScreen::screens(mtm).count(), since) {
             return;
         }
-        self.view.set(values.map(format::percent));
-        self.shown.set(Some(values));
+        if let Some(button) = self.item.button(mtm) {
+            NSView::setNeedsDisplay(&button, true);
+        }
+        self.copy_stale.set(false);
+        self.copy_at.set(Instant::now());
     }
 }
 
@@ -221,6 +246,12 @@ impl CompactView {
     }
 }
 
+/// Whether to dirty the button now, so AppKit re-snapshots the copy on the other displays: only when the copy is
+/// behind, a second display can show it, and the last refresh is `COPY_REFRESH` old.
+fn copy_due(stale: bool, screens: usize, since: Duration) -> bool {
+    stale && screens >= 2 && since >= COPY_REFRESH
+}
+
 fn fonts() -> (Retained<NSFont>, Retained<NSFont>) {
     unsafe {
         (
@@ -264,4 +295,32 @@ fn resolved(appearance: &NSAppearance) -> Retained<NSColor> {
         .unwrap_or(color);
     unsafe { NSAppearance::setCurrentAppearance(prev.as_deref()) };
     fixed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const LONG: Duration = Duration::from_secs(600);
+
+    #[test]
+    fn one_screen_never_refreshes_the_copy() {
+        assert!(!copy_due(true, 1, LONG));
+    }
+
+    #[test]
+    fn an_up_to_date_copy_is_left_alone() {
+        assert!(!copy_due(false, 2, LONG));
+    }
+
+    #[test]
+    fn a_copy_refreshed_under_30_s_ago_waits() {
+        assert!(!copy_due(true, 2, Duration::from_secs(29)));
+    }
+
+    #[test]
+    fn a_stale_copy_on_a_second_screen_refreshes_after_30_s() {
+        assert!(copy_due(true, 2, Duration::from_secs(30)));
+        assert!(copy_due(true, 3, LONG));
+    }
 }
