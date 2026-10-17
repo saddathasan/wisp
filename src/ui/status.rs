@@ -14,7 +14,7 @@ use objc2_foundation::{
     NSAttributedString, NSAttributedStringKey, NSDictionary, NSMutableAttributedString, NSString,
 };
 
-use crate::format::{self, StatusLine, Values};
+use crate::format::{self, Values};
 
 /// Owns the status item and the values last drawn into it.
 pub struct StatusItem {
@@ -44,24 +44,24 @@ impl StatusItem {
             return;
         }
         if let Some(button) = self.item.button(mtm) {
-            button.setAttributedTitle(&attributed(&format::status(&values)));
+            button.setAttributedTitle(&attributed(&values));
         }
         self.shown.set(Some(values));
     }
 }
 
 /// Labels in the secondary label colour, values in the primary one, all with monospaced digits.
-fn attributed(line: &StatusLine) -> Retained<NSAttributedString> {
+fn attributed(values: &Values) -> Retained<NSAttributedString> {
     let font = NSFont::monospacedDigitSystemFontOfSize_weight(NSFont::systemFontSize(), unsafe {
         NSFontWeightRegular
     });
     let label = attributes(&font, &NSColor::secondaryLabelColor());
     let value = attributes(&font, &NSColor::labelColor());
     let out = NSMutableAttributedString::new();
-    for (i, (name, val)) in line.iter().enumerate() {
+    for (i, (name, val)) in ["CPU", "GPU", "MEM"].iter().zip(values).enumerate() {
         let gap = if i == 0 { "" } else { "  " };
         append(&out, &format!("{gap}{name} "), &label);
-        append(&out, val, &value);
+        append(&out, &format::percent(*val), &value);
     }
     Retained::into_super(out)
 }
