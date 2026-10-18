@@ -103,17 +103,20 @@ Quit Wisp                           ⌘Q
   memory each tick. The helper starts its own network baseline, so the first rate after opening is
   never averaged across the closed period. CPU and network show `—` until the helper's first interval: a delta
   over the milliseconds since its baseline is noise.
-- At most one helper runs; a click while one is open does nothing more.
-- Interval and Launch at Login are written by the helper to `NSUserDefaults` (same bundle id). The
-  main process re-reads them when the helper exits, learning of the exit from `NSTaskDidTerminateNotification` on
-  its main thread (no polling). Quit makes the helper exit with a dedicated status (`QUIT_STATUS`) that tells the
+- At most one helper runs; a click while one is open does nothing more. The item's button stays highlighted while
+  the helper runs, as a status item with its own menu does.
+- The helper writes the interval to `NSUserDefaults` (same bundle id) and waits for it to reach cfprefsd before it
+  exits. The main process re-reads it when the helper exits, learning of the exit from `NSTaskDidTerminateNotification`
+  on its main thread (no polling), and restarts its timer only if it changed. Launch at Login is `SMAppService`'s own
+  state, never stored. Quit makes the helper exit with a dedicated status (`QUIT_STATUS`) that tells the
   main process to terminate. A chosen item's action runs before `popUpMenuPositioningItem…` returns, so the helper
   exits straight after it.
 - Interval and Launch at Login use standard checkmarks; Quit has ⌘Q.
 
 ### 3.3 Behaviour
 
-- Default interval **2 s**; options 1, 2, 3, 5, 10 s. The choice persists (`NSUserDefaults`).
+- Default interval **2 s**; options 1, 2, 3, 5, 10 s. The choice persists (`NSUserDefaults`); any other stored
+  value reads as 2 s.
 - While the menu is open, the helper's timer keeps firing (scheduled in the run loop's common modes,
   because menus track events in a separate mode) and the rows update live. The main process's timer
   keeps the menu bar item current meanwhile.

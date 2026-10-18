@@ -24,6 +24,15 @@ type Attrs = Retained<NSDictionary<NSAttributedStringKey, AnyObject>>;
 
 /// The interval options of spec §3.3, in seconds; an item's tag is its value.
 pub const INTERVALS: [isize; 5] = [1, 2, 3, 5, 10];
+
+/// The update interval in seconds for a stored `interval` value: one of `INTERVALS`, else the §3.3 default.
+pub fn interval(stored: isize) -> isize {
+    if INTERVALS.contains(&stored) {
+        stored
+    } else {
+        2
+    }
+}
 /// Right edge of the value column.
 const VALUE_X: f64 = 276.0;
 const ROW_H: f64 = 24.0;
@@ -440,6 +449,16 @@ mod tests {
                 assert_eq!(row.value, MISSING, "row {i}");
             }
             assert_eq!(row.dot, None);
+        }
+    }
+
+    #[test]
+    fn only_listed_intervals_are_kept_and_anything_else_is_2_s() {
+        for secs in INTERVALS {
+            assert_eq!(interval(secs), secs);
+        }
+        for garbage in [0, -1, 4, 7, 11, 60, isize::MAX] {
+            assert_eq!(interval(garbage), 2, "stored {garbage}");
         }
     }
 
