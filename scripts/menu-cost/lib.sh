@@ -9,7 +9,8 @@ launch() {
     P=$(pgrep -x -o wisp)
 }
 # Blocks until the log has a line matching the fixed string $1 (120 s cap).
-wait_for() { i=0; until grep -qF -- "$1" "$L" || [ $i -ge 1200 ]; do sleep 0.1; i=$((i + 1)); done; }
+# (Its own counter name: callers loop over $i.)
+wait_for() { _w=0; until grep -qF -- "$1" "$L" || [ $_w -ge 1200 ]; do sleep 0.1; _w=$((_w + 1)); done; }
 # The live helper's pid (variant g), from the main process's last "spawned" line, if it is still running.
 helper() { h=$(sed -n 's/.* spawned [0-9]* .* pid \([0-9]*\)$/\1/p' "$L" | tail -1); [ -n "$h" ] && kill -0 "$h" 2>/dev/null && echo "$h" || true; }
 fp() { footprint -f bytes "$1" > "$2.footprint.txt"; }

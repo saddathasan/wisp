@@ -10,7 +10,7 @@ use objc2::runtime::AnyObject;
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
     NSApplication, NSBackingStoreType, NSColor, NSColorSpace, NSEvent,
-    NSPanel, NSPopover, NSPopoverBehavior, NSStatusBarButton, NSView,
+    NSPanel, NSPopover, NSPopoverBehavior, NSScreen, NSStatusBarButton, NSView,
     NSViewController, NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState,
     NSVisualEffectView, NSWindowStyleMask,
 };
@@ -40,6 +40,7 @@ pub enum Host {
 /// An open dropdown: its host, the eight reading rows and the two settings rows.
 pub struct Panel {
     pub host: Host,
+    space: Space,
     readings: Vec<Retained<RowView>>,
     interval: Retained<RowView>,
     login: Retained<RowView>,
@@ -100,11 +101,6 @@ impl Panel {
             w.setOpaque(false);
             w.setBackgroundColor(Some(&NSColor::clearColor()));
             w.setHasShadow(true);
-            match variant.space {
-                Space::Default => {}
-                Space::Screen => w.setColorSpace(w.screen().and_then(|s| s.colorSpace()).as_deref()),
-                Space::Srgb => w.setColorSpace(Some(&NSColorSpace::sRGBColorSpace())),
-            }
             let appearance = NSApplication::sharedApplication(mtm).effectiveAppearance();
             if variant.vibrant {
                 let fx = NSVisualEffectView::new(mtm);
@@ -124,7 +120,7 @@ impl Panel {
             w.makeFirstResponder(Some(&content));
             Host::Panel(w)
         };
-        Self { host, readings, interval, login, last: RefCell::new(Vec::new()) }
+        Self { host, space: variant.space, readings, interval, login, last: RefCell::new(Vec::new()) }
     }
 
     /// Shows the dropdown under `button`, whose on-screen frame is `at`.
@@ -132,11 +128,25 @@ impl Panel {
         match &self.host {
             Host::Panel(w) => {
                 let size = w.frame().size;
-                // The item may sit in the notch overflow, where its frame is off screen: keep the panel on the screen.
-                let screen = w.screen().map(|s| s.visibleFrame());
+                // The screen holding the button, not the panel's own (it has none until shown).
+                let mid = NSPoint::new(at.origin.x + at.size.width / 2.0, at.origin.y + at.size.height / 2.0);
+                let mtm = w.mtm();
+                let screen = NSScreen::screens(mtm)
+                    .iter()
+                    .find(|s| {
+                        let f = s.frame();
+                        mid.x >= f.origin.x && mid.x < f.origin.x + f.size.width && mid.y >= f.origin.y && mid.y <= f.origin.y + f.size.height
+                    })
+                    .or_else(|| NSScreen::mainScreen(mtm));
+                match self.space {
+                    Space::Default => {}
+                    Space::Screen => w.setColorSpace(screen.as_ref().and_then(|s| s.colorSpace()).as_deref()),
+                    Space::Srgb => w.setColorSpace(Some(&NSColorSpace::sRGBColorSpace())),
+                }
                 let mut x = at.origin.x;
                 let mut top = at.origin.y;
-                if let Some(s) = screen {
+                // Keep the panel on that screen, also when the item sits in the notch overflow.
+                if let Some(s) = screen.map(|s| s.visibleFrame()) {
                     x = x.clamp(s.origin.x, s.origin.x + s.size.width - size.width);
                     top = top.min(s.origin.y + s.size.height);
                 }

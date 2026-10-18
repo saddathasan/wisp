@@ -20,11 +20,13 @@ def lat(log):
     ev = events(log)
     if not ev: return [], [], []
     main = ev[0][1]
-    opens = {int(e.split()[1]): t for t, p, e in ev if p == main and re.fullmatch(r'open \d+', e)}
     vis, gone, exits = [], [], []
+    last_open = 0.0
     for t, p, e in ev:
+        if p == main and re.fullmatch(r'open \d+', e): last_open = t
+        # A helper always logs "visible 1": pair it with main's latest open.
         m = re.match(r'visible (\d+) ([\d.]+) ms', e)
-        if m: vis.append(float(m.group(2)) if p == main else t - opens[int(m.group(1))])
+        if m: vis.append(float(m.group(2)) if p == main else t - last_open)
         m = re.match(r'gone (\d+) ([\d.]+) ms', e)
         if m and p == main: gone.append(float(m.group(2)))
     closes = [t for t, p, e in ev if p != main and e.startswith('close')]
@@ -32,7 +34,7 @@ def lat(log):
     exits = [b - a for a, b in zip(closes, reaped)]
     return vis, gone, exits
 f = lambda xs: '/'.join(f'{x:.1f}' for x in xs)
-print(f"{'variant':8} {'before':>16} {'open':>16} {'after1':>16} {'after5':>11} {'first ms':>16} {'later ms med [range] (n)':>26} {'close ms':>9} {'cpu closed':>10} {'cpu open':>9}  helper")
+print(f"{'variant':8} {'Δopen':>6} {'Δafter1':>7} {'Δafter5':>7} {'before':>16} {'open':>16} {'after1':>16} {'after5':>11} {'first ms':>16} {'later ms med [range] (n)':>26} {'close ms':>9} {'cpu closed':>10} {'cpu open':>9}  helper")
 for v in sorted(os.listdir(R)):
     d = os.path.join(R, v)
     if not os.path.isdir(d): continue
@@ -48,4 +50,5 @@ for v in sorted(os.listdir(R)):
     hpk = [fp(f'{d}/run{i}/open.helper.footprint.txt', 'phys_footprint_peak') for i in runs if os.path.exists(f'{d}/run{i}/open.helper.footprint.txt')]
     helper = f"open {f(hp)} peak {f(hpk)} MiB, exit {f(exits)} ms, cpu open {cpu(d + '/cpu-open-helper.txt')}" if hp else ''
     cl = f"{st.median(gone):.0f}" if gone else '-'
-    print(f"{v:8} {f(cols['before']):>16} {f(cols['open']):>16} {f(cols['after1']):>16} {f(cols['after5']):>11} {f(first):>16} {lt:>26} {cl:>9} {cpu(d + '/cpu-closed.txt'):>10} {cpu(d + '/cpu-open.txt'):>9}  {helper}")
+    med = lambda k: st.median([a - b for a, b in zip(cols[k], cols['before'])]) if cols[k] else float('nan')
+    print(f"{v:8} {med('open'):>6.1f} {med('after1'):>7.1f} {med('after5'):>7.1f} {f(cols['before']):>16} {f(cols['open']):>16} {f(cols['after1']):>16} {f(cols['after5']):>11} {f(first):>16} {lt:>26} {cl:>9} {cpu(d + '/cpu-closed.txt'):>10} {cpu(d + '/cpu-open.txt'):>9}  {helper}")

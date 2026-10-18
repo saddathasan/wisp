@@ -251,7 +251,12 @@ define_class!(
                             let f = w.frame();
                             let (o, z) = (f.origin, f.size);
                             let name = w.class().name().to_string_lossy().into_owned();
-                            log(&format!("visible {i} {dt:.1} ms win {} {name} at {},{} {}x{}", w.windowNumber(), o.x, o.y, z.width, z.height));
+                            let active = NSApplication::sharedApplication(self.mtm()).isActive();
+                            log(&format!(
+                                "visible {i} {dt:.1} ms win {} {name} at {},{} {}x{} key {} active {active} space {}",
+                                w.windowNumber(), o.x, o.y, z.width, z.height, w.isKeyWindow(),
+                                w.colorSpace().and_then(|c| c.localizedName()).map_or("-".into(), |n| n.to_string())
+                            ));
                         }
                         None => log(&format!("spawned {i} {dt:.1} ms pid {}", HELPER.load(Ordering::SeqCst))),
                     }
