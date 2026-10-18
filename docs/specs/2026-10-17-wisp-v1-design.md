@@ -69,8 +69,9 @@ left to right.
 
 ### 3.2 Dropdown (on click)
 
-A native `NSMenu`, shown by a short-lived helper process (ADR 0001). A click on the status item runs the same
-binary as `wisp --dropdown <x> <y>`. The helper shows the menu at that point and exits when it closes, so the
+A native `NSMenu`, shown by a short-lived helper process (ADR 0001). A press on the status item runs the same
+binary as `wisp --dropdown <x> <y> <appearance>` (an `NSTask`): the button's bottom-left in screen coordinates and
+the name of the menu bar's appearance, which the menu takes as a status item's own menu would. The helper shows the menu at that point and exits when it closes, so the
 menu's ~5–7 MiB of AppKit warm-up goes back to the system every time:
 
 ```
@@ -100,11 +101,14 @@ Quit Wisp                           ⌘Q
 - The helper builds the rows when it starts and updates them in place on its own timer while the menu is open.
 - Network, pressure and swap are read only by the helper; the main process reads just CPU, GPU and
   memory each tick. The helper starts its own network baseline, so the first rate after opening is
-  never averaged across the closed period.
+  never averaged across the closed period. CPU and network show `—` until the helper's first interval: a delta
+  over the milliseconds since its baseline is noise.
 - At most one helper runs; a click while one is open does nothing more.
 - Interval and Launch at Login are written by the helper to `NSUserDefaults` (same bundle id). The
-  main process re-reads them when the helper exits. Quit makes the helper exit with a status that
-  tells the main process to terminate.
+  main process re-reads them when the helper exits, learning of the exit from `NSTaskDidTerminateNotification` on
+  its main thread (no polling). Quit makes the helper exit with a dedicated status (`QUIT_STATUS`) that tells the
+  main process to terminate. A chosen item's action runs before `popUpMenuPositioningItem…` returns, so the helper
+  exits straight after it.
 - Interval and Launch at Login use standard checkmarks; Quit has ⌘Q.
 
 ### 3.3 Behaviour
@@ -126,8 +130,9 @@ A single Rust binary crate. macOS 14+, `aarch64-apple-darwin` only.
 
 ```
 src/
-  main.rs        app delegate: startup, timer, sleep/lock observers, settings, launch at login;
-                 `--dropdown <x> <y>` runs the helper (ADR 0001) instead
+  main.rs        app delegate: startup, timer, sleep/lock observers, settings; spawns the helper on a click;
+                 `--dropdown` runs the helper (ADR 0001) instead
+  helper.rs      the helper process: pops the menu up, samples on its own timer, launch at login, exits on close
   sample/        reads the system; no AppKit, so it can be unit-tested
     mod.rs       Snapshot type + Sampler that owns per-metric state
     cpu.rs
