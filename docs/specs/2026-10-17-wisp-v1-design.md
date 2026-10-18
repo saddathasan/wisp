@@ -33,6 +33,21 @@ menu bar item, plus one plain list on click, and nothing else.
 - **S7:** dark: white labels and values, no light flash in 24 screenshots over the 2.8 s after launch. The item fades in white. With the system in light mode the bar stays dark over this wallpaper and the item stays white. With the button forced to Aqua, the labels and values turn dark. A genuinely light bar was not available on this setup.
 - **Two displays:** the inactive display's copy refreshes every ~30 s while values move (§3.1); before that it sat on stale values for minutes. With the sync on, Wisp read `cpu 0.085%`, 14.4 MiB against Stats' 1.988% ([run](../benchmarks/runs/2026-10-18-7d7bf25.md)); the extra ~0.05% is one ~14 ms button render per 30 s. On the active display the item updates every tick.
 
+**Measured (2026-10-18, feat/menu, same machine; Method v1):**
+
+- **S1, S2, S5:** 10 min in normal use next to Stats 3.0.22, at `e29c4c7` (dropdown helper, settings and pause in): Wisp
+  `cpu 0.093%`, 13.9 MiB (14,566,216 B); Stats `cpu 2.040%`, 120.5 MiB (22× CPU, 8.7× footprint) ([run](../benchmarks/runs/2026-10-18-e29c4c7.md)).
+  Across the three Method v1 runs Wisp reads 0.038–0.093% and 13.9–14.6 MiB, Stats 1.99–2.23% and 120–137 MiB.
+- **S3 (in-process):** with the observers called directly (lock, display sleep, display wake, unlock), no tick from lock
+  to unlock, display wake alone left it paused, and the first tick after unlock started a fresh baseline. CPU 0.000%
+  (0.01 idle wakeups/s) over 120 s paused against 0.100% (0.07/s) over 120 s running. A real lock and display sleep is
+  on the hand-check list.
+- **Dropdown (ADR 0001):** opens in 130–151 ms (median 138.5 ms), about half of it process start; the helper peaks at
+  18.0–18.4 MiB while open and gives it all back on exit; the main process keeps +16 and +32 KiB after five opens and
+  loads no new image ([run](../benchmarks/runs/2026-10-18-fafc024-dropdown.md)).
+- **S7:** screenshots in `docs/images/`, the item rendered from its own layers at 2× (it sits behind the notch overflow
+  on the built-in display here) and the dropdown captured as a window, each with the appearance forced in-process.
+
 ## 2. Scope
 
 **v1:** CPU %, GPU %, RAM % in the menu bar; CPU, GPU, memory breakdown, memory pressure, swap and
