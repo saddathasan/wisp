@@ -12,7 +12,8 @@ use objc2::{
 use objc2_app_kit::{
     NSAccessibility, NSAppearance, NSAppearanceCustomization, NSAutoresizingMaskOptions, NSColor,
     NSColorSpace, NSFont, NSFontAttributeName, NSFontWeightMedium, NSFontWeightSemibold,
-    NSForegroundColorAttributeName, NSMenu, NSScreen, NSStatusBar, NSStatusItem, NSStringDrawing,
+    NSForegroundColorAttributeName, NSMenu, NSScreen, NSStatusBar, NSStatusBarButton, NSStatusItem,
+    NSStringDrawing,
     NSVariableStatusItemLength, NSView,
 };
 use objc2_foundation::{
@@ -49,10 +50,12 @@ pub struct StatusItem {
 }
 
 impl StatusItem {
-    /// Adds the compact item to the menu bar with `menu` as its dropdown.
-    pub fn new(mtm: MainThreadMarker, menu: &NSMenu) -> Self {
+    /// Adds the compact item to the menu bar with `menu` as its dropdown (none: the caller sets the button's action).
+    pub fn new(mtm: MainThreadMarker, menu: Option<&NSMenu>) -> Self {
         let item = NSStatusBar::systemStatusBar().statusItemWithLength(NSVariableStatusItemLength);
-        item.setMenu(Some(menu));
+        if menu.is_some() {
+            item.setMenu(menu);
+        }
         let button = item.button(mtm).expect("a status item has a button");
         // The layers are invisible to VoiceOver, so the button names the item.
         button.setAccessibilityLabel(Some(ns_string!("Wisp")));
@@ -67,6 +70,11 @@ impl StatusItem {
             copy_stale: Cell::new(false),
             copy_at: Cell::new(Instant::now()),
         }
+    }
+
+    /// The item's button: the click path the exp/menu-cost driver exercises.
+    pub fn button(&self) -> Retained<NSStatusBarButton> {
+        self.item.button(self.view.mtm()).expect("a status item has a button")
     }
 
     /// Draws `values` on the first call and afterwards only when they have moved from what is on screen,

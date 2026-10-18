@@ -1,5 +1,6 @@
 //! Throwaway (exp/menu-cost, never merged): the spec §3.2 dropdown built several NSMenu ways, picked by `WISP_MENU`,
 //! so each one's footprint, open latency and CPU can be measured. Unset = main's Quit-only menu.
+//! The non-NSMenu variants (d panel, e popover, g out-of-process helper) live in panel.rs and main.rs.
 
 use std::cell::RefCell;
 
@@ -30,17 +31,32 @@ type Attrs = Retained<NSDictionary<NSAttributedStringKey, AnyObject>>;
 pub const INTERVALS: [isize; 5] = [1, 2, 3, 5, 10];
 /// Right edge of the value column: the text variant's tab stop and the view variant's row width.
 const VALUE_X: f64 = 276.0;
-const ROW_H: f64 = 24.0;
+pub(crate) const ROW_H: f64 = 24.0;
+/// A row view's width: the value column plus its inset.
+pub(crate) const ROW_W: f64 = VALUE_X + ROW_INSET;
 /// Inset of a row view's label and value, matching native item text (measured off screenshots).
 const ROW_INSET: f64 = 16.0;
 
 /// How the dropdown is built. `WISP_MENU`: unset = Quit only (main), `a` = text items, `b` = custom row views,
 /// `ca`/`cb` (`c` = `ca`) = the same built on open and released on close. `f` is `a` plus a bundle-level change.
+/// `d` = layer-drawn borderless panel (`dv` vibrant background, `dc`/`ds` window colour space = screen's / sRGB),
+/// `e` = NSPopover, `g` = variant a's menu shown by a short-lived helper process.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Kind {
     Quit,
     Text,
     View,
+    Panel,
+    Popover,
+    Helper,
+}
+
+/// The window colour space a panel variant forces, if any.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Space {
+    Default,
+    Screen,
+    Srgb,
 }
 
 /// The `WISP_MENU` choice: the row kind and whether rows exist only while the menu is open.
@@ -48,6 +64,9 @@ pub enum Kind {
 pub struct Variant {
     pub kind: Kind,
     pub lazy: bool,
+    /// Panel only: an NSVisualEffectView background instead of a plain layer colour.
+    pub vibrant: bool,
+    pub space: Space,
 }
 
 impl Variant {
@@ -59,9 +78,27 @@ impl Variant {
             "b" => (Kind::View, false),
             "c" | "ca" => (Kind::Text, true),
             "cb" => (Kind::View, true),
+            "d" | "dv" | "dc" | "ds" => (Kind::Panel, true),
+            "e" => (Kind::Popover, true),
+            "g" => (Kind::Helper, true),
             _ => (Kind::Quit, false),
         };
-        Self { kind, lazy }
+        let space = match v.as_str() {
+            "dc" => Space::Screen,
+            "ds" => Space::Srgb,
+            _ => Space::Default,
+        };
+        Self { kind, lazy, vibrant: v == "dv", space }
+    }
+
+    /// Variant a, the content the out-of-process helper shows.
+    pub fn text() -> Self {
+        Self { kind: Kind::Text, lazy: false, vibrant: false, space: Space::Default }
+    }
+
+    /// Whether the status item opens an NSMenu (the button's own click path) rather than calling the delegate.
+    pub fn is_menu(&self) -> bool {
+        matches!(self.kind, Kind::Quit | Kind::Text | Kind::View)
     }
 }
 
@@ -289,7 +326,7 @@ impl Dropdown {
                 }
                 Rows::View(views)
             }
-            Kind::Quit => return,
+            _ => return,
         };
         self.menu.addItem(&NSMenuItem::separatorItem(mtm));
         let sub = NSMenu::new(mtm);
@@ -376,7 +413,7 @@ fn quit_item(mtm: MainThreadMarker) -> Retained<NSMenuItem> {
     }
 }
 
-struct RowIvars {
+pub(crate) struct RowIvars {
     label: Retained<AnyObject>,
     value: Retained<AnyObject>,
     row: RefCell<Row>,
@@ -388,7 +425,7 @@ define_class!(
     #[unsafe(super(NSView))]
     #[thread_kind = MainThreadOnly]
     #[ivars = RowIvars]
-    struct RowView;
+    pub(crate) struct RowView;
 
     // Layer colours are resolved, so restyle whenever the appearance or scale can have changed (as status.rs does).
     impl RowView {
@@ -411,7 +448,7 @@ define_class!(
 
 impl RowView {
     /// A layer-hosting row: label CATextLayer left, value CATextLayer right-aligned at `VALUE_X`.
-    fn new(mtm: MainThreadMarker, row: Row) -> Retained<Self> {
+    pub(crate) fn new(mtm: MainThreadMarker, row: Row) -> Retained<Self> {
         let font = NSFont::menuFontOfSize(0.0);
         let line = (font.ascender() - font.descender()).ceil();
         let y = ((ROW_H - line) / 2.0).round();
@@ -427,7 +464,7 @@ impl RowView {
             }
             tl
         };
-        let width = VALUE_X + ROW_INSET;
+        let width = ROW_W;
         let label = layer(ROW_INSET, width - 2.0 * ROW_INSET, false);
         let value = layer(ROW_INSET, width - 2.0 * ROW_INSET, true);
         let this = Self::alloc(mtm).set_ivars(RowIvars {
@@ -447,7 +484,7 @@ impl RowView {
         this
     }
 
-    fn set(&self, row: Row) {
+    pub(crate) fn set(&self, row: Row) {
         *self.ivars().row.borrow_mut() = row;
         self.draw();
     }

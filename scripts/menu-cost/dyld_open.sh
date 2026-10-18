@@ -1,14 +1,22 @@
 #!/bin/sh
-# Lists the images dyld loads on the first menu open: fresh launch with DYLD_PRINT_LIBRARIES, open+close once.
-# Not a footprint run (the env var changes startup). usage: [APP=..] [WISP_MENU=..] dyld_open.sh <outdir> <x> <y>
+# Images dyld loads on the first open, plus a forced-light then forced-dark screenshot of the open dropdown and the
+# frontmost app while it is open (lsappinfo, read-only). Fresh launch with DYLD_PRINT_LIBRARIES; not a footprint run.
+# usage: [APP=..] [WISP_MENU=..] dyld_open.sh <outdir>
 set -eu
-OUT=$1 X=$2 Y=$3
+OUT=$1
 HERE=$(cd "$(dirname "$0")" && pwd)
 APP=${APP:-$HERE/../../target/Wisp.app}
-mkdir -p "$OUT"; L=$OUT/dyld.txt; : > "$L"
-pkill -x wisp || true; sleep 1
-open -n --stderr "$L" --env DYLD_PRINT_LIBRARIES=1 ${WISP_MENU:+--env WISP_MENU=$WISP_MENU} "$APP"; sleep 10
-P=$(pgrep -x wisp); N=$(wc -l < "$L")
-"$HERE/menu" open "$P" "$X" "$Y"; sleep 3; screencapture -x -R "$((X - 170)),$((Y - 15)),500,450" "$OUT/menu.png"; "$HERE/menu" close "$P"; sleep 2
-echo "launch: $N images; first open loaded $(($(wc -l < "$L") - N)):"
-tail -n +$((N + 1)) "$L" | sed 's/.*dyld_shared_cache.*//; s/^dyld\[[0-9]*\]: <[^>]*> //' | sed 's#.*/##' | grep -v '^$' | tr '\n' ' '; echo
+. "$HERE/lib.sh"
+front() { lsappinfo info "$(lsappinfo front)" | head -1 | cut -d'"' -f2; }
+FRONT0=$(front)
+launch "$OUT" 2,3,3 --env DYLD_PRINT_LIBRARIES=1 --env WISP_LOOKS=light,dark
+for i in 1 2; do
+    wait_for " visible $i "; sleep 1.5
+    look=$([ $i = 1 ] && echo light || echo dark)
+    W=$(grep -F " visible $i " "$L" | tail -1 | sed 's/.* win \([0-9]*\) .*/\1/')
+    # Window captures of a just-shown window fail now and then ("could not create image"): retry.
+    for _ in 1 2 3; do screencapture -x -o -l "$W" "$OUT/$look.png" 2>/dev/null && break; sleep 0.3; done
+    echo "open $i front: $(front)  (before launch: $FRONT0)"
+done
+wait_for " $P done"; sleep 1
+python3 -I "$HERE/dyld_diff.py" "$L" "$P"
