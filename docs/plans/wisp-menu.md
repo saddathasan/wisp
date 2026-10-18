@@ -86,14 +86,21 @@ latency and helper footprint recorded in `docs/benchmarks/runs/`.
 
 ## Milestone 4 — `ms/4-settings`: interval and launch at login round-trip
 
-- [ ] **Task 7 (TDD): interval.** The stored interval is read through one function that accepts only 1/2/3/5/10
-  and falls back to 2 s; tested.
-- [ ] **Task 8: round-trip.** Choosing an interval in the helper writes `NSUserDefaults` (flushed before exit); the
+- [x] **Task 7 (TDD): interval.** The stored interval is read through one function that accepts only 1/2/3/5/10
+  and falls back to 2 s; tested. *`menu::interval`, red on a pass-through stub then green; both processes read
+  through `helper::stored_interval`, and main's `INTERVAL` constant is gone (e0c6bdd).*
+- [x] **Task 8: round-trip.** Choosing an interval in the helper writes `NSUserDefaults` (flushed before exit); the
   main process re-reads it when the helper exits and restarts its timer only if it changed. Launch at Login calls
-  `register`/`unregister` and its checkmark always shows the real `status`.
-- [ ] **Task 9: verify in-process**: trigger the items' actions directly (a temporary patch), check
+  `register`/`unregister` and its checkmark always shows the real `status`. *The helper `synchronize`s after the
+  write; the main process needs no sync: a read saw another process's `defaults write` within ~30 ms, before the
+  writer had exited. The button is highlighted while the helper runs (d03a87a).*
+- [x] **Task 9: verify in-process**: trigger the items' actions directly (a temporary patch), check
   `defaults read io.github.saddathasan.wisp`, the main timer's new interval, and `sfltool dumpbtm` after register and
-  after unregister. Leave Wisp unregistered.
+  after unregister. Leave Wisp unregistered. *`performActionForItemAtIndex` + `cancelTracking`, 5 opens: stored 7
+  read as 2 in both processes; choosing 5 gave `defaults` 5 and main ticks 5.0 s apart, back to 2 ticked 2.0 s;
+  Launch at Login 0 → 1 → 0 read through `status` in the helper and the next helper, no NSError (no `sfltool`, which
+  prompts for a password). Each open brings one burst of 12 `restyle`s in main (the helper's menu window appearing,
+  as in Milestone 3); the highlight adds none and never dirties the button. Ends at status 0, interval 2.*
 
 **Acceptance:** gate green; both settings round-trip as above.
 
@@ -130,3 +137,5 @@ latency and helper footprint recorded in `docs/benchmarks/runs/`.
 5. **Pause:** lock the screen (and let the display sleep) for 2 min with `scripts/measure.sh <pid> 120` running; CPU ≈ 0.
 6. **Mouse choice:** clicking Quit Wisp quits Wisp, and choosing an interval with the mouse closes the menu cleanly
    (action-before-exit was verified in-process through the keyboard path only).
+7. **Highlight:** the item shows pressed while the dropdown is open and unpressed once it closes, whichever way it
+   closes (item chosen, Escape, outside click).
