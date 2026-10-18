@@ -3,6 +3,9 @@
 
 mod format;
 mod helper;
+// Used by the sleep and lock observers.
+#[allow(dead_code)]
+mod pause;
 mod sample;
 mod ui;
 
