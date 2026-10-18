@@ -21,9 +21,6 @@ use objc2_foundation::{
 use sample::Sampler;
 use ui::status::StatusItem;
 
-/// Seconds between samples. Spec §3.3 default; the menu feature makes it user-selectable.
-const INTERVAL: f64 = 2.0;
-
 /// State the delegate keeps alive for the app's lifetime.
 struct Ivars {
     sampler: RefCell<Sampler>,
@@ -145,16 +142,17 @@ impl AppDelegate {
     /// One repeating timer for everything. The 10% tolerance lets macOS batch our wakeup with others;
     /// common modes keep it firing while the button tracks a press (event tracking has its own run loop mode).
     fn start_timer(&self) {
+        let secs = helper::stored_interval() as f64;
         let timer = unsafe {
             NSTimer::timerWithTimeInterval_target_selector_userInfo_repeats(
-                INTERVAL,
+                secs,
                 self,
                 sel!(timerFired:),
                 None,
                 true,
             )
         };
-        timer.setTolerance(INTERVAL * 0.1);
+        timer.setTolerance(secs * 0.1);
         unsafe { NSRunLoop::mainRunLoop().addTimer_forMode(&timer, NSRunLoopCommonModes) };
     }
 }

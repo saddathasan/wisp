@@ -16,13 +16,10 @@ use objc2_foundation::{
 };
 
 use crate::sample::Sampler;
-use crate::ui::menu::Dropdown;
+use crate::ui::menu::{self, Dropdown};
 
 /// The helper's exit status when the user chose Quit Wisp; the main process terminates on it.
 pub const QUIT_STATUS: i32 = 3;
-
-/// Spec §3.3's default interval in seconds, used until the user picks another.
-const DEFAULT_INTERVAL: isize = 2;
 
 /// `SMAppService.Status.enabled`.
 const LOGIN_ENABLED: isize = 1;
@@ -147,10 +144,9 @@ pub fn run(args: &[String]) -> ! {
     std::process::exit(1);
 }
 
-/// The stored update interval in seconds (`interval` in NSUserDefaults), or the default when unset.
-fn stored_interval() -> isize {
-    let v = NSUserDefaults::standardUserDefaults().integerForKey(ns_string!("interval"));
-    if v > 0 { v } else { DEFAULT_INTERVAL }
+/// The update interval in seconds stored as `interval` in NSUserDefaults; both processes read it through here.
+pub(crate) fn stored_interval() -> isize {
+    menu::interval(NSUserDefaults::standardUserDefaults().integerForKey(ns_string!("interval")))
 }
 
 /// Whether `SMAppService.mainApp` is enabled. ServiceManagement is loaded here, in the helper only, so the main
