@@ -27,6 +27,7 @@ struct Ivars {
     status: OnceCell<StatusItem>,
     /// The running dropdown helper, if any.
     helper: RefCell<Option<Retained<NSTask>>>,
+    timer: RefCell<Option<Retained<NSTimer>>>,
 }
 
 define_class!(
@@ -65,6 +66,7 @@ define_class!(
             }
             if let Some(task) = self.spawn_helper() {
                 *self.ivars().helper.borrow_mut() = Some(task);
+                self.highlight(true);
             }
         }
 
@@ -81,11 +83,20 @@ define_class!(
                     Some(&task),
                 )
             };
+            self.highlight(false);
             // A signal's number is reported as the status too, so only a normal exit counts.
             if task.terminationReason() == NSTaskTerminationReason::Exit
                 && task.terminationStatus() == helper::QUIT_STATUS
             {
                 NSApplication::sharedApplication(self.mtm()).terminate(None);
+                return;
+            }
+            // The helper may have stored a new interval. No sync needed: a read sees another process's write as soon
+            // as cfprefsd has it, and the helper waits for that before exiting.
+            let timer = self.ivars().timer.borrow().clone();
+            if let Some(timer) = timer.filter(|t| t.timeInterval() != helper::stored_interval() as f64) {
+                timer.invalidate();
+                self.start_timer();
             }
         }
     }
@@ -97,6 +108,7 @@ impl AppDelegate {
             sampler: RefCell::new(Sampler::new()),
             status: OnceCell::new(),
             helper: RefCell::new(None),
+            timer: RefCell::new(None),
         };
         let this = Self::alloc(mtm).set_ivars(ivars);
         unsafe { msg_send![super(this), init] }
@@ -139,8 +151,8 @@ impl AppDelegate {
         Some(task)
     }
 
-    /// One repeating timer for everything. The 10% tolerance lets macOS batch our wakeup with others;
-    /// common modes keep it firing while the button tracks a press (event tracking has its own run loop mode).
+    /// One repeating timer for everything, at the stored interval. The 10% tolerance lets macOS batch our wakeup with
+    /// others; common modes keep it firing while the button tracks a press (event tracking has its own run loop mode).
     fn start_timer(&self) {
         let secs = helper::stored_interval() as f64;
         let timer = unsafe {
@@ -154,6 +166,13 @@ impl AppDelegate {
         };
         timer.setTolerance(secs * 0.1);
         unsafe { NSRunLoop::mainRunLoop().addTimer_forMode(&timer, NSRunLoopCommonModes) };
+        *self.ivars().timer.borrow_mut() = Some(timer);
+    }
+
+    fn highlight(&self, on: bool) {
+        if let Some(status) = self.ivars().status.get() {
+            status.highlight(on);
+        }
     }
 }
 

@@ -75,6 +75,13 @@ impl StatusItem {
         }
     }
 
+    /// Shows the item pressed while the helper's menu is open, as a status item's own menu does.
+    pub fn highlight(&self, on: bool) {
+        if let Some(button) = self.item.button(self.view.mtm()) {
+            button.highlight(on);
+        }
+    }
+
     /// Where the dropdown goes and how it looks: the button's bottom-left in screen coordinates and the name of the
     /// button's effective (the menu bar's) appearance.
     pub fn anchor(&self) -> (NSPoint, Retained<NSString>) {

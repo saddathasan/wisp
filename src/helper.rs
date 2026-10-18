@@ -11,8 +11,8 @@ use objc2_app_kit::{
     NSApplicationDelegate, NSMenuItem,
 };
 use objc2_foundation::{
-    NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRunLoop, NSRunLoopCommonModes, NSString,
-    NSTimer, NSUserDefaults, ns_string,
+    NSError, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRunLoop, NSRunLoopCommonModes,
+    NSString, NSTimer, NSUserDefaults, ns_string,
 };
 
 use crate::sample::Sampler;
@@ -80,13 +80,29 @@ define_class!(
             std::process::exit(self.ivars().status.get());
         }
 
-        // ponytail: inert; Milestone 4 stores the choice in NSUserDefaults.
         #[unsafe(method(setInterval:))]
-        fn set_interval(&self, _sender: &NSMenuItem) {}
+        fn set_interval(&self, sender: &NSMenuItem) {
+            let defaults = NSUserDefaults::standardUserDefaults();
+            defaults.setInteger_forKey(sender.tag(), ns_string!("interval"));
+            // The process exits as soon as the menu closes, and the main process reads the value on that exit:
+            // this waits until cfprefsd holds the write.
+            defaults.synchronize();
+        }
 
-        // ponytail: inert, so no run can register a login item; Milestone 4 calls SMAppService register/unregister.
         #[unsafe(method(toggleLogin:))]
-        fn toggle_login(&self, _sender: &NSMenuItem) {}
+        fn toggle_login(&self, _sender: &NSMenuItem) {
+            let Some(svc) = main_app() else { return };
+            // Flips the real status rather than the checkmark, so a stale menu can never act backwards.
+            let on: isize = unsafe { msg_send![&*svc, status] };
+            let done: Result<(), Retained<NSError>> = if on == LOGIN_ENABLED {
+                unsafe { msg_send![&*svc, unregisterAndReturnError: _] }
+            } else {
+                unsafe { msg_send![&*svc, registerAndReturnError: _] }
+            };
+            if let Err(e) = done {
+                eprintln!("wisp: Launch at Login: {e:?}");
+            }
+        }
 
         #[unsafe(method(quit:))]
         fn quit(&self, _sender: &NSMenuItem) {
@@ -149,15 +165,16 @@ pub(crate) fn stored_interval() -> isize {
     menu::interval(NSUserDefaults::standardUserDefaults().integerForKey(ns_string!("interval")))
 }
 
-/// Whether `SMAppService.mainApp` is enabled. ServiceManagement is loaded here, in the helper only, so the main
-/// process's images stay as they are (spec §4.3).
+/// Whether `SMAppService.mainApp` is enabled.
 fn login_enabled() -> bool {
+    main_app().is_some_and(|svc| LOGIN_ENABLED == unsafe { msg_send![&*svc, status] })
+}
+
+/// `SMAppService.mainApp`. ServiceManagement is loaded here, in the helper only, so the main process's images stay
+/// as they are (spec §4.3).
+fn main_app() -> Option<Retained<AnyObject>> {
     let path = c"/System/Library/Frameworks/ServiceManagement.framework/ServiceManagement";
     unsafe { libc::dlopen(path.as_ptr(), libc::RTLD_LAZY) };
-    let Some(cls) = AnyClass::get(c"SMAppService") else {
-        return false;
-    };
-    let svc: Retained<AnyObject> = unsafe { msg_send![cls, mainAppService] };
-    let status: isize = unsafe { msg_send![&*svc, status] };
-    status == LOGIN_ENABLED
+    let cls = AnyClass::get(c"SMAppService")?;
+    Some(unsafe { msg_send![cls, mainAppService] })
 }
