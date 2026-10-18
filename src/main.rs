@@ -22,10 +22,6 @@ use sample::Sampler;
 use ui::menu::{Dropdown, Kind, Variant};
 use ui::status::StatusItem;
 
-// Launch at Login (spec §3.3) uses SMAppService; linked directly so no new crate is needed for the throwaway.
-#[link(name = "ServiceManagement", kind = "framework")]
-unsafe extern "C" {}
-
 /// Seconds between samples. Spec §3.3 default; the menu feature makes it user-selectable.
 const INTERVAL: f64 = 2.0;
 
@@ -174,6 +170,9 @@ impl AppDelegate {
 
 /// SMAppService.mainApp's status; 1 = enabled.
 fn login_enabled() -> bool {
+    // dlopen'd, not linked, so the default variant loads exactly main's images; no new crate for the throwaway.
+    let path = c"/System/Library/Frameworks/ServiceManagement.framework/ServiceManagement";
+    unsafe { libc::dlopen(path.as_ptr(), libc::RTLD_LAZY) };
     let svc: Retained<AnyObject> = unsafe { msg_send![class!(SMAppService), mainAppService] };
     let status: isize = unsafe { msg_send![&*svc, status] };
     status == 1

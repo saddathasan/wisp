@@ -229,7 +229,8 @@ impl Dropdown {
     /// An empty menu for the full variants (filled by `build`), or main's Quit-only menu.
     pub fn new(mtm: MainThreadMarker, variant: Variant) -> Self {
         let menu = NSMenu::new(mtm);
-        menu.setAutoenablesItems(false);
+        // Quit-only keeps main's menu exactly; the full variants set every item's enabled state themselves.
+        menu.setAutoenablesItems(variant.kind == Kind::Quit);
         if variant.kind == Kind::Quit {
             menu.addItem(&quit_item(mtm));
         }
