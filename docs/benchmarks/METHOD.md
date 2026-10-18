@@ -112,6 +112,36 @@ same way gives the per-tick floor (sampling and timer); run them interleaved, fo
 alternately. The same rules apply: no menu, no accessibility polling, screen awake. Record the raw
 output in `runs/` with the patch's commit.
 
+## S4: WindowServer load (Wisp only)
+
+Whether Wisp adds WindowServer load (spec §1, S4: none vs. no monitor running). Its menu bar item is drawn by
+WindowServer, so a redraw costs there too, outside Wisp's own CPU share. WindowServer's CPU is compared between
+windows with Wisp running and windows with Wisp quit, interleaved so that drift in what else is on screen falls
+on both arms.
+
+```sh
+scripts/bundle.sh
+scripts/windowserver.sh   # optional: rounds (default 3), seconds per window (default 180)
+```
+
+`windowserver.sh` quits any running Wisp, then for each round opens `target/Wisp.app`, waits 20 s, measures a
+window (180 s of `top` samples; with the samplers' own overhead about 200 s of wall time, which the shares divide
+by), quits Wisp (`pkill -x wisp`), waits 20 s and measures again; it ends with Wisp running. Per window it
+prints WindowServer's CPU share from its `ps` CPU-time delta (the figure used), WindowServer's mean `top` %CPU over
+the same window (a cross-check; top's first sample is dropped), Wisp's own CPU share, the smallest HID idle time
+seen (`ioreg`, every 10 s: under 10 s means input during the window, **active**) and whether the screen was ever
+locked. It holds a `caffeinate -d -i` assertion for its own run so the display does not sleep.
+
+- **Stats and other monitors quit** (the script refuses to start while Stats runs and prints any it finds);
+  no menu open, no accessibility polling, screen awake and unlocked, displays as they are and recorded.
+- Activity is not forbidden, it is noise: it is annotated per window. If more than half the windows are
+  active, run another round set and record both.
+- **Read it** as the difference between the arms' means against the spread (min–max) within each arm. S4 passes
+  when the Wisp-on arm sits within the Wisp-off arm's noise. Idle windows are read against idle windows: an active
+  one stays in the table, called out, but does not decide the verdict. Record the raw output in `runs/`.
+
+This adds a measurement; it does not change v1's Wisp-vs-Stats procedure, so the method stays v1.
+
 ## Dropdown: open latency and footprint (Wisp only)
 
 How fast the dropdown helper (ADR 0001) opens, what it costs while open, and that the main process keeps nothing
