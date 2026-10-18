@@ -7,8 +7,8 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, Sel};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, class, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSAccessibility, NSAccessibilityStaticTextRole, NSAppearanceCustomization, NSColor,
-    NSControlStateValueOff, NSControlStateValueOn, NSFont, NSFontAttributeName,
+    NSAccessibility, NSAccessibilityStaticTextRole, NSAppearance, NSAppearanceCustomization,
+    NSColor, NSControlStateValueOff, NSControlStateValueOn, NSFont, NSFontAttributeName,
     NSFontWeightRegular, NSForegroundColorAttributeName, NSMenu, NSMenuItem, NSView,
 };
 use objc2_foundation::{
@@ -193,14 +193,14 @@ struct Style {
 }
 
 impl Style {
-    fn new(fix: impl Fn(&NSColor) -> Retained<NSColor>) -> Self {
+    fn new(appearance: &NSAppearance) -> Self {
         let font = NSFont::menuFontOfSize(0.0);
         // Monospaced digits keep the right-aligned value column from jittering as numbers change.
         let digits = unsafe {
             NSFont::monospacedDigitSystemFontOfSize_weight(font.pointSize(), NSFontWeightRegular)
         };
         let attrs = |f: &NSFont, c: Retained<NSColor>| {
-            let c = fix(&c);
+            let c = resolve(appearance, &c);
             let keys: [&NSAttributedStringKey; 2] =
                 unsafe { [NSFontAttributeName, NSForegroundColorAttributeName] };
             let vals: [&AnyObject; 2] = [f.as_ref(), c.as_ref()];
@@ -322,8 +322,7 @@ impl RowView {
     }
 
     fn restyle(&self) {
-        let appearance = self.effectiveAppearance();
-        *self.ivars().style.borrow_mut() = Some(Style::new(|c| resolve(&appearance, c)));
+        *self.ivars().style.borrow_mut() = Some(Style::new(&self.effectiveAppearance()));
         let scale = self.window().map_or(2.0, |w| w.backingScaleFactor());
         for tl in [&self.ivars().label, &self.ivars().value] {
             let _: () = unsafe { msg_send![&**tl, setContentsScale: scale] };
