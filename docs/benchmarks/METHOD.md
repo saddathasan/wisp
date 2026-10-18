@@ -57,8 +57,9 @@ scripts/compare.sh "idle"  # or "normal use"; optional 2nd argument: seconds (de
 
 ## Rules during a run
 
-- **Never open either app's menu.** Wisp's first menu open permanently adds ~5 MB footprint for the life
-  of the process (spec §1); a run in which a menu was opened is void.
+- **Never open either app's menu.** In-process, a first NSMenu open permanently adds 4.5–7.3 MiB of
+  footprint ([research](../research/menu-memory-cost.md)); Wisp's dropdown runs in a separate helper
+  process that `measure.sh` doesn't count (ADR 0001). A run in which a menu was opened is void.
 - **Nothing polls the apps' accessibility tree** (System Events UI scripting, Accessibility Inspector,
   screen readers): answering it allocates and runs code inside the app.
 - **Screen awake** and unlocked for the whole window: Wisp pauses on display sleep and lock (spec
