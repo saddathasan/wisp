@@ -3,6 +3,7 @@
 
 mod format;
 mod helper;
+mod pause;
 mod sample;
 mod ui;
 
@@ -11,13 +12,18 @@ use std::cell::{OnceCell, RefCell};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
-use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate};
+use objc2_app_kit::{
+    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSWorkspace,
+    NSWorkspaceDidWakeNotification, NSWorkspaceScreensDidSleepNotification,
+    NSWorkspaceScreensDidWakeNotification, NSWorkspaceWillSleepNotification,
+};
 use objc2_foundation::{
-    NSArray, NSBundle, NSNotification, NSNotificationCenter, NSObject, NSObjectProtocol, NSRunLoop,
-    NSRunLoopCommonModes, NSString, NSTask, NSTaskDidTerminateNotification,
-    NSTaskTerminationReason, NSTimer,
+    NSArray, NSBundle, NSDistributedNotificationCenter, NSNotification, NSNotificationCenter,
+    NSNotificationSuspensionBehavior, NSObject, NSObjectProtocol, NSRunLoop, NSRunLoopCommonModes,
+    NSString, NSTask, NSTaskDidTerminateNotification, NSTaskTerminationReason, NSTimer,
 };
 
+use pause::{Paused, Reason};
 use sample::Sampler;
 use ui::status::StatusItem;
 
@@ -27,7 +33,9 @@ struct Ivars {
     status: OnceCell<StatusItem>,
     /// The running dropdown helper, if any.
     helper: RefCell<Option<Retained<NSTask>>>,
+    /// None while paused, so nothing restarts it before the pause ends.
     timer: RefCell<Option<Retained<NSTimer>>>,
+    paused: RefCell<Paused>,
 }
 
 define_class!(
@@ -47,15 +55,46 @@ define_class!(
                 .ivars()
                 .status
                 .set(StatusItem::new(mtm, self, sel!(openDropdown:)));
-            self.tick();
+            self.tick(true);
             self.start_timer();
+            self.observe_sleep_and_lock();
         }
     }
 
     impl AppDelegate {
+        #[unsafe(method(displaySlept:))]
+        fn display_slept(&self, _notification: &NSNotification) {
+            self.pause(Reason::DisplayAsleep);
+        }
+
+        #[unsafe(method(displayWoke:))]
+        fn display_woke(&self, _notification: &NSNotification) {
+            self.resume(Reason::DisplayAsleep);
+        }
+
+        #[unsafe(method(systemWillSleep:))]
+        fn system_will_sleep(&self, _notification: &NSNotification) {
+            self.pause(Reason::SystemAsleep);
+        }
+
+        #[unsafe(method(systemWoke:))]
+        fn system_woke(&self, _notification: &NSNotification) {
+            self.resume(Reason::SystemAsleep);
+        }
+
+        #[unsafe(method(screenLocked:))]
+        fn screen_locked(&self, _notification: &NSNotification) {
+            self.pause(Reason::Locked);
+        }
+
+        #[unsafe(method(screenUnlocked:))]
+        fn screen_unlocked(&self, _notification: &NSNotification) {
+            self.resume(Reason::Locked);
+        }
+
         #[unsafe(method(timerFired:))]
         fn timer_fired(&self, _timer: &NSTimer) {
-            self.tick();
+            self.tick(false);
         }
 
         #[unsafe(method(openDropdown:))]
@@ -92,7 +131,8 @@ define_class!(
                 return;
             }
             // The helper may have stored a new interval. No sync needed: a read sees another process's write as soon
-            // as cfprefsd has it, and the helper waits for that before exiting.
+            // as cfprefsd has it, and the helper waits for that before exiting. While paused there is no timer, and resuming
+            // starts one at the stored interval anyway.
             let timer = self.ivars().timer.borrow().clone();
             if let Some(timer) = timer.filter(|t| t.timeInterval() != helper::stored_interval() as f64) {
                 timer.invalidate();
@@ -109,15 +149,22 @@ impl AppDelegate {
             status: OnceCell::new(),
             helper: RefCell::new(None),
             timer: RefCell::new(None),
+            paused: RefCell::new(Paused::default()),
         };
         let this = Self::alloc(mtm).set_ivars(ivars);
         unsafe { msg_send![super(this), init] }
     }
 
-    /// Samples once and updates the menu bar text.
-    fn tick(&self) {
+    /// Samples once and updates the menu bar text; `fresh` when the baseline was just taken (launch, resume).
+    fn tick(&self, fresh: bool) {
         // Menu bar values only; the helper reads the dropdown's own (spec §3.2).
-        let snapshot = self.ivars().sampler.borrow_mut().sample(false);
+        let mut snapshot = self.ivars().sampler.borrow_mut().sample(false);
+        // A milliseconds-old baseline holds zero or a few CPU ticks (idle ticks are published up to ~1 s apart), so
+        // the delta is a dash or noise either way (41.7% seen at launch); CPU waits for the first interval, as in the
+        // helper.
+        if fresh {
+            snapshot.cpu = None;
+        }
         if let Some(status) = self.ivars().status.get() {
             status.show(format::values(&snapshot));
         }
@@ -167,6 +214,60 @@ impl AppDelegate {
         timer.setTolerance(secs * 0.1);
         unsafe { NSRunLoop::mainRunLoop().addTimer_forMode(&timer, NSRunLoopCommonModes) };
         *self.ivars().timer.borrow_mut() = Some(timer);
+    }
+
+    /// Stops sampling for `reason`: no timer means no wakeups at all while paused (S3).
+    fn pause(&self, reason: Reason) {
+        self.ivars().paused.borrow_mut().pause(reason);
+        if let Some(timer) = self.ivars().timer.take() {
+            timer.invalidate();
+        }
+    }
+
+    /// Clears `reason`; once none is left, samples against a fresh baseline so the gap isn't averaged in (spec §3.3).
+    fn resume(&self, reason: Reason) {
+        if self.ivars().paused.borrow_mut().resume(reason) {
+            self.ivars().sampler.borrow_mut().reset();
+            self.tick(true);
+            self.start_timer();
+        }
+    }
+
+    /// Workspace notifications cover display and system sleep; lock and unlock only come as distributed notifications.
+    fn observe_sleep_and_lock(&self) {
+        let workspace = NSWorkspace::sharedWorkspace().notificationCenter();
+        let local = [
+            (sel!(displaySlept:), unsafe {
+                NSWorkspaceScreensDidSleepNotification
+            }),
+            (sel!(displayWoke:), unsafe {
+                NSWorkspaceScreensDidWakeNotification
+            }),
+            (sel!(systemWillSleep:), unsafe {
+                NSWorkspaceWillSleepNotification
+            }),
+            (sel!(systemWoke:), unsafe { NSWorkspaceDidWakeNotification }),
+        ];
+        for (action, name) in local {
+            unsafe { workspace.addObserver_selector_name_object(self, action, Some(name), None) };
+        }
+        let distributed = NSDistributedNotificationCenter::defaultCenter();
+        let lock = [
+            (sel!(screenLocked:), "com.apple.screenIsLocked"),
+            (sel!(screenUnlocked:), "com.apple.screenIsUnlocked"),
+        ];
+        for (action, name) in lock {
+            // An accessory app is never active, and the default behaviour holds distributed notifications until it is.
+            unsafe {
+                distributed.addObserver_selector_name_object_suspensionBehavior(
+                    self,
+                    action,
+                    Some(&NSString::from_str(name)),
+                    None,
+                    NSNotificationSuspensionBehavior::DeliverImmediately,
+                )
+            };
+        }
     }
 
     fn highlight(&self, on: bool) {
