@@ -2,6 +2,7 @@
 //! All UI setup happens in the delegate once AppKit has finished launching.
 
 mod format;
+mod helper;
 mod sample;
 mod ui;
 
@@ -108,6 +109,10 @@ fn quit_menu(mtm: MainThreadMarker) -> Retained<NSMenu> {
 }
 
 fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("--dropdown") {
+        helper::run(&args[1..]);
+    }
     let mtm = MainThreadMarker::new().expect("Wisp must start on the main thread");
     let app = NSApplication::sharedApplication(mtm);
     // LSUIElement covers the bundled app; this also keeps `cargo run` out of the Dock.

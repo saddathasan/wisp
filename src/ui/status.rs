@@ -6,7 +6,9 @@ use std::time::{Duration, Instant};
 
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
-use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, class, define_class, msg_send};
+use objc2::{
+    DefinedClass, MainThreadMarker, MainThreadOnly, Message, class, define_class, msg_send,
+};
 use objc2_app_kit::{
     NSAccessibility, NSAppearance, NSAppearanceCustomization, NSAutoresizingMaskOptions, NSColor,
     NSColorSpace, NSFont, NSFontAttributeName, NSFontWeightMedium, NSFontWeightSemibold,
@@ -275,7 +277,7 @@ fn set_string(layer: &AnyObject, text: &str, attrs: &Attrs) {
 }
 
 /// Runs `f` with implicit layer animations off, so a new value snaps in rather than cross-fading.
-fn transaction(f: impl FnOnce()) {
+pub(crate) fn transaction(f: impl FnOnce()) {
     let cat = class!(CATransaction);
     let _: () = unsafe { msg_send![cat, begin] };
     let _: () = unsafe { msg_send![cat, setDisableActions: true] };
@@ -283,16 +285,20 @@ fn transaction(f: impl FnOnce()) {
     let _: () = unsafe { msg_send![cat, commit] };
 }
 
-/// The primary label colour as a fixed sRGB value for `appearance`; CATextLayer cannot follow dynamic colours.
+/// The primary label colour as a fixed sRGB value for `appearance`.
+fn resolved(appearance: &NSAppearance) -> Retained<NSColor> {
+    resolve(appearance, &NSColor::labelColor())
+}
+
+/// `color` as a fixed sRGB value for `appearance`; CATextLayer cannot follow dynamic colours.
 // The non-deprecated `performAsCurrentDrawingAppearance:` takes a block, which needs another crate.
 #[allow(deprecated)]
-fn resolved(appearance: &NSAppearance) -> Retained<NSColor> {
+pub(crate) fn resolve(appearance: &NSAppearance, color: &NSColor) -> Retained<NSColor> {
     let prev = NSAppearance::currentAppearance();
     unsafe { NSAppearance::setCurrentAppearance(Some(appearance)) };
-    let color = NSColor::labelColor();
     let fixed = color
         .colorUsingColorSpace(&NSColorSpace::sRGBColorSpace())
-        .unwrap_or(color);
+        .unwrap_or_else(|| color.retain());
     unsafe { NSAppearance::setCurrentAppearance(prev.as_deref()) };
     fixed
 }
