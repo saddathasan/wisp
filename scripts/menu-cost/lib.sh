@@ -5,7 +5,7 @@ launch() {
     pkill -x wisp || true; sleep 1
     D=$2; shift 2
     # -n: a new instance, so `--env` is applied even if LaunchServices still remembers the last one.
-    open -n --stderr "$L" --env WISP_DRIVE="$D" ${WISP_MENU:+--env WISP_MENU=$WISP_MENU} "$@" "$APP"; sleep 2
+    open -n --stderr "$L" --env WISP_DRIVE="$D" ${WISP_MENU:+--env WISP_MENU=$WISP_MENU} ${WISP_SCREEN:+--env WISP_SCREEN=$WISP_SCREEN} "$@" "$APP"; sleep 2
     P=$(pgrep -x -o wisp)
 }
 # Blocks until the log has a line matching the fixed string $1 (120 s cap).

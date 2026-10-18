@@ -138,13 +138,20 @@ impl Panel {
                         mid.x >= f.origin.x && mid.x < f.origin.x + f.size.width && mid.y >= f.origin.y && mid.y <= f.origin.y + f.size.height
                     })
                     .or_else(|| NSScreen::mainScreen(mtm));
+                // WISP_SCREEN=<index> pins the panel to the top right of that screen, to compare display profiles.
+                let pinned = std::env::var("WISP_SCREEN").ok().and_then(|n| n.parse::<usize>().ok());
+                let screens = NSScreen::screens(mtm);
+                let screen = pinned.filter(|&n| n < screens.count()).map(|n| screens.objectAtIndex(n)).or(screen);
+                let (mut x, mut top) = (at.origin.x, at.origin.y);
+                if let (Some(_), Some(s)) = (pinned, screen.as_ref()) {
+                    let f = s.visibleFrame();
+                    (x, top) = (f.origin.x + f.size.width - size.width - 8.0, f.origin.y + f.size.height);
+                }
                 match self.space {
                     Space::Default => {}
                     Space::Screen => w.setColorSpace(screen.as_ref().and_then(|s| s.colorSpace()).as_deref()),
                     Space::Srgb => w.setColorSpace(Some(&NSColorSpace::sRGBColorSpace())),
                 }
-                let mut x = at.origin.x;
-                let mut top = at.origin.y;
                 // Keep the panel on that screen, also when the item sits in the notch overflow.
                 if let Some(s) = screen.map(|s| s.visibleFrame()) {
                     x = x.clamp(s.origin.x, s.origin.x + s.size.width - size.width);

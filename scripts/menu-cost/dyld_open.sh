@@ -11,9 +11,10 @@ front() { lsappinfo info "$(lsappinfo front)" | head -1 | cut -d'"' -f2; }
 FRONT0=$(front)
 launch "$OUT" 2,3,3 --env DYLD_PRINT_LIBRARIES=1 --env WISP_LOOKS=light,dark
 for i in 1 2; do
-    wait_for " visible $i "; sleep 1.5
+    # The i-th visible line: a variant g helper always logs "visible 1".
+    until [ "$(grep -c ' visible ' "$L")" -ge $i ]; do sleep 0.1; done; sleep 1.5
     look=$([ $i = 1 ] && echo light || echo dark)
-    W=$(grep -F " visible $i " "$L" | tail -1 | sed 's/.* win \([0-9]*\) .*/\1/')
+    W=$(grep -F " visible " "$L" | sed -n "${i}p" | sed 's/.* win \([0-9]*\) .*/\1/')
     # Window captures of a just-shown window fail now and then ("could not create image"): retry.
     for _ in 1 2 3; do screencapture -x -o -l "$W" "$OUT/$look.png" 2>/dev/null && break; sleep 0.3; done
     echo "open $i front: $(front)  (before launch: $FRONT0)"

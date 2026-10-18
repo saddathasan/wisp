@@ -15,7 +15,7 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject, Sel};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, class, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSAppearance, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSApplication,
+    NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSApplication,
     NSApplicationActivationPolicy, NSApplicationDelegate, NSControlStateValueOff,
     NSControlStateValueOn, NSMenu, NSMenuDelegate, NSMenuItem, NSPopoverDelegate, NSView,
     NSWindow, NSWindowDelegate, NSWindowOcclusionState,
@@ -176,7 +176,13 @@ define_class!(
             let p = Panel::new(self.mtm(), d.variant, kind == Some(Kind::Popover), self.ivars().interval.get(), self.ivars().login.get());
             match &p.host {
                 panel::Host::Panel(w) => w.setDelegate(Some(ProtocolObject::from_ref(self))),
-                panel::Host::Popover(po) => po.setDelegate(Some(ProtocolObject::from_ref(self))),
+                panel::Host::Popover(po) => {
+                    po.setDelegate(Some(ProtocolObject::from_ref(self)));
+                    // Like the menu, the popover follows its button's (the menu bar's) appearance unless forced.
+                    if let Some(a) = NSApplication::sharedApplication(self.mtm()).appearance() {
+                        po.setAppearance(Some(&a));
+                    }
+                }
             }
             *self.ivars().panel.borrow_mut() = Some(p);
             self.ivars().open.set(true);
@@ -217,6 +223,10 @@ define_class!(
             d.i.set(i);
             if let Some(look) = d.looks.get(i - 1) {
                 force_look(self.mtm(), Some(look));
+                // A status item's menu follows the menu bar's appearance, not the app's.
+                if let Some(dd) = self.ivars().dropdown.get() {
+                    dd.menu.setAppearance(NSApplication::sharedApplication(self.mtm()).appearance().as_deref());
+                }
             }
             d.closing.set(false);
             d.t.set(now_ms());
