@@ -24,15 +24,18 @@ type Attrs = Retained<NSDictionary<NSAttributedStringKey, AnyObject>>;
 
 /// The interval options of spec §3.3, in seconds; an item's tag is its value.
 pub const INTERVALS: [isize; 5] = [1, 2, 3, 5, 10];
+/// The §3.3 default interval in seconds, used when nothing valid is stored.
+const DEFAULT_INTERVAL: isize = 2;
 
 /// The update interval in seconds for a stored `interval` value: one of `INTERVALS`, else the §3.3 default.
 pub fn interval(stored: isize) -> isize {
     if INTERVALS.contains(&stored) {
         stored
     } else {
-        2
+        DEFAULT_INTERVAL
     }
 }
+
 /// Right edge of the value column.
 const VALUE_X: f64 = 276.0;
 const ROW_H: f64 = 24.0;
@@ -105,9 +108,9 @@ pub struct Dropdown {
 }
 
 impl Dropdown {
-    /// Builds every §3.2 item. `target` receives `setInterval:` (tag = seconds), `toggleLogin:` and `quit:`;
-    /// `interval` and `login` set the checkmarks.
+    /// Builds every §3.2 item, with `interval` and `login` checked and `target` receiving their actions.
     pub fn new(mtm: MainThreadMarker, target: &AnyObject, interval: isize, login: bool) -> Self {
+        // `target` gets `setInterval:` (tag = seconds), `toggleLogin:` and `quit:`.
         let menu = NSMenu::new(mtm);
         // Every item's enabled state is set here; autoenabling would grey the action-less reading rows.
         menu.setAutoenablesItems(false);
