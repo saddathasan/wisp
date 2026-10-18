@@ -1,5 +1,5 @@
-//! Wisp entry point: an accessory app (no Dock icon) that owns one menu bar item and one timer.
-//! All UI setup happens in the delegate once AppKit has finished launching.
+//! Wisp entry point: an accessory app (no Dock icon) that owns one menu bar item and one timer, and starts the
+//! dropdown helper on a click; `--dropdown` runs that helper instead (ADR 0001).
 
 mod format;
 mod helper;
@@ -9,13 +9,13 @@ mod ui;
 use std::cell::{OnceCell, RefCell};
 
 use objc2::rc::Retained;
-use objc2::runtime::ProtocolObject;
+use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
-use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSMenu, NSMenuItem,
-};
+use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate};
 use objc2_foundation::{
-    NSNotification, NSObject, NSObjectProtocol, NSRunLoop, NSRunLoopCommonModes, NSTimer, ns_string,
+    NSArray, NSBundle, NSNotification, NSNotificationCenter, NSObject, NSObjectProtocol, NSRunLoop,
+    NSRunLoopCommonModes, NSString, NSTask, NSTaskDidTerminateNotification,
+    NSTaskTerminationReason, NSTimer,
 };
 
 use sample::Sampler;
@@ -28,6 +28,8 @@ const INTERVAL: f64 = 2.0;
 struct Ivars {
     sampler: RefCell<Sampler>,
     status: OnceCell<StatusItem>,
+    /// The running dropdown helper, if any.
+    helper: RefCell<Option<Retained<NSTask>>>,
 }
 
 define_class!(
@@ -43,7 +45,10 @@ define_class!(
         #[unsafe(method(applicationDidFinishLaunching:))]
         fn did_finish_launching(&self, _notification: &NSNotification) {
             let mtm = self.mtm();
-            let _ = self.ivars().status.set(StatusItem::new(mtm, &quit_menu(mtm)));
+            let _ = self
+                .ivars()
+                .status
+                .set(StatusItem::new(mtm, self, sel!(openDropdown:)));
             self.tick();
             self.start_timer();
         }
@@ -54,6 +59,38 @@ define_class!(
         fn timer_fired(&self, _timer: &NSTimer) {
             self.tick();
         }
+
+        #[unsafe(method(openDropdown:))]
+        fn open_dropdown(&self, _sender: Option<&AnyObject>) {
+            // At most one helper; a click while its menu is up is the click that closes it.
+            if self.ivars().helper.borrow().is_some() {
+                return;
+            }
+            if let Some(task) = self.spawn_helper() {
+                *self.ivars().helper.borrow_mut() = Some(task);
+            }
+        }
+
+        /// Delivered on the main thread by the run loop, so the exit is seen without polling.
+        #[unsafe(method(helperExited:))]
+        fn helper_exited(&self, _notification: &NSNotification) {
+            let Some(task) = self.ivars().helper.take() else {
+                return;
+            };
+            unsafe {
+                NSNotificationCenter::defaultCenter().removeObserver_name_object(
+                    self,
+                    Some(NSTaskDidTerminateNotification),
+                    Some(&task),
+                )
+            };
+            // A signal's number is reported as the status too, so only a normal exit counts.
+            if task.terminationReason() == NSTaskTerminationReason::Exit
+                && task.terminationStatus() == helper::QUIT_STATUS
+            {
+                NSApplication::sharedApplication(self.mtm()).terminate(None);
+            }
+        }
     }
 );
 
@@ -62,6 +99,7 @@ impl AppDelegate {
         let ivars = Ivars {
             sampler: RefCell::new(Sampler::new()),
             status: OnceCell::new(),
+            helper: RefCell::new(None),
         };
         let this = Self::alloc(mtm).set_ivars(ivars);
         unsafe { msg_send![super(this), init] }
@@ -69,15 +107,43 @@ impl AppDelegate {
 
     /// Samples once and updates the menu bar text.
     fn tick(&self) {
-        // Menu bar values only; the menu feature passes `true` while the dropdown is open.
+        // Menu bar values only; the helper reads the dropdown's own (spec §3.2).
         let snapshot = self.ivars().sampler.borrow_mut().sample(false);
         if let Some(status) = self.ivars().status.get() {
             status.show(format::values(&snapshot));
         }
     }
 
+    /// Starts this binary as `--dropdown <x> <y> <appearance>` at the status item, watching for its exit.
+    fn spawn_helper(&self) -> Option<Retained<NSTask>> {
+        let (at, look) = self.ivars().status.get()?.anchor();
+        let args = [
+            NSString::from_str("--dropdown"),
+            NSString::from_str(&at.x.to_string()),
+            NSString::from_str(&at.y.to_string()),
+            look,
+        ];
+        let task = NSTask::new();
+        task.setExecutableURL(NSBundle::mainBundle().executableURL().as_deref());
+        task.setArguments(Some(&NSArray::from_retained_slice(&args)));
+        let center = NSNotificationCenter::defaultCenter();
+        unsafe {
+            center.addObserver_selector_name_object(
+                self,
+                sel!(helperExited:),
+                Some(NSTaskDidTerminateNotification),
+                Some(&task),
+            )
+        };
+        if task.launchAndReturnError().is_err() {
+            unsafe { center.removeObserver_name_object(self, None, Some(&task)) };
+            return None;
+        }
+        Some(task)
+    }
+
     /// One repeating timer for everything. The 10% tolerance lets macOS batch our wakeup with others;
-    /// common modes keep it firing while a menu is open (menus track events in their own run loop mode).
+    /// common modes keep it firing while the button tracks a press (event tracking has its own run loop mode).
     fn start_timer(&self) {
         let timer = unsafe {
             NSTimer::timerWithTimeInterval_target_selector_userInfo_repeats(
@@ -91,21 +157,6 @@ impl AppDelegate {
         timer.setTolerance(INTERVAL * 0.1);
         unsafe { NSRunLoop::mainRunLoop().addTimer_forMode(&timer, NSRunLoopCommonModes) };
     }
-}
-
-/// The dropdown menu; for now only Quit, which a nil target routes to NSApplication's `terminate:`.
-fn quit_menu(mtm: MainThreadMarker) -> Retained<NSMenu> {
-    let menu = NSMenu::new(mtm);
-    let quit = unsafe {
-        NSMenuItem::initWithTitle_action_keyEquivalent(
-            NSMenuItem::alloc(mtm),
-            ns_string!("Quit Wisp"),
-            Some(sel!(terminate:)),
-            ns_string!("q"),
-        )
-    };
-    menu.addItem(&quit);
-    menu
 }
 
 fn main() {

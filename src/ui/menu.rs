@@ -90,6 +90,7 @@ pub fn rows(s: &Snapshot) -> Vec<Row> {
 
 /// The built menu and the views of its reading rows, which `update` rewrites in place.
 pub struct Dropdown {
+    /// The menu the helper pops up.
     pub menu: Retained<NSMenu>,
     views: Vec<Retained<RowView>>,
 }
