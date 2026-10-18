@@ -129,7 +129,7 @@ index c9b4849..f3b3a95 100644
      let args: Vec<String> = std::env::args().skip(1).collect();
      if args.first().map(String::as_str) == Some("--dropdown") {
 diff --git a/src/ui/status.rs b/src/ui/status.rs
-index b6a83a4..8a1fe3f 100644
+index 985a806..b028447 100644
 --- a/src/ui/status.rs
 +++ b/src/ui/status.rs
 @@ -82,6 +82,13 @@ impl StatusItem {
@@ -143,6 +143,6 @@ index b6a83a4..8a1fe3f 100644
 +        }
 +    }
 +
-     /// Where the dropdown goes and how it looks: the button's bottom-left in screen coordinates and the name of the
-     /// button's effective (the menu bar's) appearance.
+     /// Where the dropdown goes and how it looks: the button's screen bottom-left and its appearance name.
      pub fn anchor(&self) -> (NSPoint, Retained<NSString>) {
+         // The button's effective appearance is the menu bar's, which the helper's menu should match.
