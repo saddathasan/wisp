@@ -7,8 +7,8 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, Sel};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, class, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSAccessibility, NSAccessibilityStaticTextRole, NSAppearanceCustomization, NSColor,
-    NSControlStateValueOff, NSControlStateValueOn, NSFont, NSFontAttributeName,
+    NSAccessibility, NSAccessibilityStaticTextRole, NSAppearance, NSAppearanceCustomization,
+    NSColor, NSControlStateValueOff, NSControlStateValueOn, NSFont, NSFontAttributeName,
     NSFontWeightRegular, NSForegroundColorAttributeName, NSMenu, NSMenuItem, NSView,
 };
 use objc2_foundation::{
@@ -24,15 +24,18 @@ type Attrs = Retained<NSDictionary<NSAttributedStringKey, AnyObject>>;
 
 /// The interval options of spec §3.3, in seconds; an item's tag is its value.
 pub const INTERVALS: [isize; 5] = [1, 2, 3, 5, 10];
+/// The §3.3 default interval in seconds, used when nothing valid is stored.
+const DEFAULT_INTERVAL: isize = 2;
 
 /// The update interval in seconds for a stored `interval` value: one of `INTERVALS`, else the §3.3 default.
 pub fn interval(stored: isize) -> isize {
     if INTERVALS.contains(&stored) {
         stored
     } else {
-        2
+        DEFAULT_INTERVAL
     }
 }
+
 /// Right edge of the value column.
 const VALUE_X: f64 = 276.0;
 const ROW_H: f64 = 24.0;
@@ -105,9 +108,9 @@ pub struct Dropdown {
 }
 
 impl Dropdown {
-    /// Builds every §3.2 item. `target` receives `setInterval:` (tag = seconds), `toggleLogin:` and `quit:`;
-    /// `interval` and `login` set the checkmarks.
+    /// Builds every §3.2 item, with `interval` and `login` checked and `target` receiving their actions.
     pub fn new(mtm: MainThreadMarker, target: &AnyObject, interval: isize, login: bool) -> Self {
+        // `target` gets `setInterval:` (tag = seconds), `toggleLogin:` and `quit:`.
         let menu = NSMenu::new(mtm);
         // Every item's enabled state is set here; autoenabling would grey the action-less reading rows.
         menu.setAutoenablesItems(false);
@@ -193,14 +196,14 @@ struct Style {
 }
 
 impl Style {
-    fn new(fix: impl Fn(&NSColor) -> Retained<NSColor>) -> Self {
+    fn new(appearance: &NSAppearance) -> Self {
         let font = NSFont::menuFontOfSize(0.0);
         // Monospaced digits keep the right-aligned value column from jittering as numbers change.
         let digits = unsafe {
             NSFont::monospacedDigitSystemFontOfSize_weight(font.pointSize(), NSFontWeightRegular)
         };
         let attrs = |f: &NSFont, c: Retained<NSColor>| {
-            let c = fix(&c);
+            let c = resolve(appearance, &c);
             let keys: [&NSAttributedStringKey; 2] =
                 unsafe { [NSFontAttributeName, NSForegroundColorAttributeName] };
             let vals: [&AnyObject; 2] = [f.as_ref(), c.as_ref()];
@@ -261,20 +264,12 @@ define_class!(
     #[ivars = RowIvars]
     struct RowView;
 
-    // Layer colours are resolved, so restyle whenever the appearance or scale can have changed (as status.rs does).
     impl RowView {
+        // Layer colours are resolved, so the row restyles once it is in the menu's window, against the final
+        // appearance and scale. That is the only hook it needs: the helper sets the menu's appearance once before
+        // showing it and lives only while the menu is open, so neither can change afterwards.
         #[unsafe(method(viewDidMoveToWindow))]
         fn moved_to_window(&self) {
-            self.restyle();
-        }
-
-        #[unsafe(method(viewDidChangeEffectiveAppearance))]
-        fn appearance_changed(&self) {
-            self.restyle();
-        }
-
-        #[unsafe(method(viewDidChangeBackingProperties))]
-        fn backing_changed(&self) {
             self.restyle();
         }
     }
@@ -330,8 +325,7 @@ impl RowView {
     }
 
     fn restyle(&self) {
-        let appearance = self.effectiveAppearance();
-        *self.ivars().style.borrow_mut() = Some(Style::new(|c| resolve(&appearance, c)));
+        *self.ivars().style.borrow_mut() = Some(Style::new(&self.effectiveAppearance()));
         let scale = self.window().map_or(2.0, |w| w.backingScaleFactor());
         for tl in [&self.ivars().label, &self.ivars().value] {
             let _: () = unsafe { msg_send![&**tl, setContentsScale: scale] };

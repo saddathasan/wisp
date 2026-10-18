@@ -49,9 +49,9 @@ pub struct StatusItem {
 }
 
 impl StatusItem {
-    /// Adds the compact item to the menu bar; a click sends `action` to `target`. It has no NSMenu: the dropdown
-    /// runs in a helper process (ADR 0001).
+    /// Adds the compact item to the menu bar; a click sends `action` to `target`.
     pub fn new(mtm: MainThreadMarker, target: &AnyObject, action: Sel) -> Self {
+        // No NSMenu: the dropdown runs in a helper process (ADR 0001).
         let item = NSStatusBar::systemStatusBar().statusItemWithLength(NSVariableStatusItemLength);
         let button = item.button(mtm).expect("a status item has a button");
         unsafe {
@@ -82,9 +82,9 @@ impl StatusItem {
         }
     }
 
-    /// Where the dropdown goes and how it looks: the button's bottom-left in screen coordinates and the name of the
-    /// button's effective (the menu bar's) appearance.
+    /// Where the dropdown goes and how it looks: the button's screen bottom-left and its appearance name.
     pub fn anchor(&self) -> (NSPoint, Retained<NSString>) {
+        // The button's effective appearance is the menu bar's, which the helper's menu should match.
         let mtm = self.view.mtm();
         let button = self.item.button(mtm).expect("a status item has a button");
         let local = button.convertRect_toView(button.bounds(), None);
@@ -94,10 +94,10 @@ impl StatusItem {
         (frame.origin, button.effectiveAppearance().name())
     }
 
-    /// Draws `values` on the first call and afterwards only when they have moved from what is on screen,
-    /// then brings the inactive display's copy up to date if it is due.
+    /// Draws `values` when they have moved from what is on screen, then syncs the other displays' copy if due.
     pub fn show(&self, values: Values) {
-        // Compared with the drawn values, not the previous sample, so slow drift still shows once it adds up.
+        // Compared with the drawn values, not the previous sample, so slow drift still shows once it adds up; the
+        // first call always draws.
         if self
             .shown
             .get()
