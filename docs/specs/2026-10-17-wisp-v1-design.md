@@ -6,8 +6,8 @@
 
 Wisp is a macOS menu bar resource monitor whose own cost is close to zero. Existing monitors
 (Stats, iStat Menus) show the right numbers but cost 1–11% CPU and tens of MB, mostly from
-features and redraws the user never sees. Wisp shows a small, fixed set of readings in one line
-of text, plus one plain list on click, and nothing else.
+features and redraws the user never sees. Wisp shows a small, fixed set of readings in one compact
+menu bar item, plus one plain list on click, and nothing else.
 
 **Success criteria (v1 is done when all hold on an M-series Mac, macOS 14+):**
 
@@ -20,6 +20,18 @@ of text, plus one plain list on click, and nothing else.
 | S5 | Measurably cheaper than Stats tuned to CPU+GPU+RAM (~1.6% CPU) | same `scripts/measure.sh` run on both, plus `top` power |
 | S6 | Readings agree with Activity Monitor (CPU %, Memory Used, Swap) within rounding | side-by-side check |
 | S7 | Looks native and polished in light and dark mode | screenshots in both, reviewed before release |
+| S8 | A forced redraw (a visible value change every tick) costs ≤ 2 ms CPU | temporary patch alternating CPU 11/88, `scripts/measure.sh <pid> 120`, CPU time ÷ redraws |
+| S9 | The menu bar item is a constant ~130 pt wide, the same at `0%`, `100%` and missing | width of the item's window or accessibility frame |
+
+**Measured (2026-10-18, compact bar, Apple M5, macOS 27.0.1; built-in 2560×1664 Retina with notch plus a 3440×1440 external display, extended):**
+
+- **Source of record:** [`docs/benchmarks/`](../benchmarks/) — the method ([METHOD.md](../benchmarks/METHOD.md)) and every run, raw output included; the figures below are from [the backfilled 2026-10-18 runs](../benchmarks/runs/2026-10-18-compact-bar-backfill.md).
+- **S1, S5:** 10 min side by side, bundled release build after a 20 s settle: Wisp `cpu 0.027%`, Stats `cpu 2.143%`; a clean repeat (no accessibility polling) read Wisp `cpu 0.043%`, Stats `cpu 2.027%`.
+- **S2:** Wisp 14.6 MiB after 10 min (15,270,728 B; `footprint` prints `15 MB`), 14.8 MiB on the clean repeat; Stats 135–137 MB. The live heap is ~4.1–4.4 MB; the rest is AppKit's floor. Two one-time costs plateau and never grow back: switching the active display warms up ~1 MB (method caches, ColorSync and vImage converters for the other display, plateau at ~14.9 MiB after five round trips), and **the first time the menu opens AppKit keeps +1.5 MB heap / +5.4 MB footprint (→ ~20 MiB) for the life of the process**; later opens add nothing. That is the dropdown's cost, open for `feat/menu`. `leaks` stays at 416 leaks / 19.9 KB from launch.
+- **S8:** CPU time ÷ 60 redraws over 120 s, interleaved with the unpatched build. Steady state: forced 0.84, 0.84, 0.84 and 1.00 ms per redraw, unpatched 0.50–0.84 ms per tick (sampling plus noise), so a redraw adds ~0.3–0.5 ms. A re-check read 1.16 and 1.16 ms. The first set read 4.3 and 2.5 ms forced and coincided with the footprint step of a first menu open (19 MB) and the item moving; it never reproduced in six later runs. `sample` in steady state shows only the timer's Core Animation commit.
+- **S9:** the accessibility frame is 130 × 24 pt at `0%`, `100%` and `‒`, and on the real build.
+- **S7:** dark: white labels and values, no light flash in 24 screenshots over the 2.8 s after launch. The item fades in white. With the system in light mode the bar stays dark over this wallpaper and the item stays white. With the button forced to Aqua, the labels and values turn dark. A genuinely light bar was not available on this setup.
+- **Two displays:** the inactive display's copy refreshes every ~30 s while values move (§3.1); before that it sat on stale values for minutes. With the sync on, Wisp read `cpu 0.085%`, 14.4 MiB against Stats' 1.988% ([run](../benchmarks/runs/2026-10-18-7d7bf25.md)); the extra ~0.05% is one ~14 ms button render per 30 s. On the active display the item updates every tick.
 
 ## 2. Scope
 
@@ -37,13 +49,23 @@ preferences windows, themes, Intel Macs, auto-update, App Store distribution.
 
 ### 3.1 Menu bar
 
-One line of text: `CPU 12%  GPU 3%  MEM 61%`.
+A compact two-line item: per metric a small label (`CPU`, `GPU`, `MEM`) over its value, columns
+left to right.
 
-- Labels in the secondary label colour; values in the primary label colour.
-- System font at menu bar size with **monospaced digits**. Each value is padded to three digits
-  with figure spaces (U+2007), so the item's width never changes and never nudges neighbouring
-  icons. A missing reading shows as a figure dash (U+2012, also digit-wide), e.g. `GPU  ‒%`.
-- Light/dark and the menu bar's tinting are handled by using system semantic colours only.
+- Label 7.5 pt medium system font; value 12 pt semibold system font with monospaced digits.
+- Labels and values both in the primary label colour, so the item is white on a dark menu bar and
+  adapts on a light one.
+- 6 pt between columns and a 4 pt inset at each end. Every column is as wide as its widest possible
+  content (`100%` or the label), so the item is a constant ~130 pt and never nudges its neighbours.
+- Values are unpadded (`7%`, `42%`, `100%`); a missing reading is a figure dash `‒` (U+2012).
+- Drawn by six text layers in a layer-hosting view inside the status item button: a redraw only
+  swaps layer strings, so a value change never re-renders the button (~14 ms each time it does).
+- With two or more displays, the inactive display's dimmed copy is a snapshot AppKit takes of the
+  button; after a value change Wisp dirties the button to refresh it at most once every 30 s, and
+  never with one display (decision 2026-10-18, inactive-display sync).
+- Layer colours cannot follow dynamic system colours, so they are resolved to sRGB and re-resolved
+  when the view enters the menu bar window, when the bar's appearance changes and when the display
+  scale changes. Clicks fall through the view to the button, which opens the dropdown.
 
 ### 3.2 Dropdown (on click)
 
@@ -104,12 +126,12 @@ src/
     net.rs
   format.rs      Snapshot → display strings (pure)
   ui/
-    status.rs    menu bar item; sets the title only when the formatted text changed
+    status.rs    menu bar item: a layer-drawn two-line view, redrawn only when a value moves ≥ 2 points
     menu.rs      dropdown construction and in-place row updates
 ```
 
 **Data flow:** timer fires → `Sampler::sample()` returns a `Snapshot` → `format` produces strings →
-`status` compares with the last string and sets the title only on change → if the menu is open,
+`status` compares with the values on screen and swaps the layer strings only when one has moved → if the menu is open,
 `menu` updates its rows.
 
 Everything runs on the main thread. One sample is a handful of system calls (microseconds), so a
@@ -164,9 +186,9 @@ Excluded on purpose: `sysinfo` (broad, refreshes far more than needed), `tray-ic
 
 - **Unit tests (pure logic):** CPU delta maths, memory derivation from a fixed
   `vm_statistics64`, network rate including counter reset, pressure mapping, and all formatting
-  (padding, units, `—` for missing values).
+  (rounding, units, dashes for missing values).
 - **Smoke test:** each sampler returns `Some` on the build machine (`cargo test`, run locally).
-- **Manual acceptance:** S1–S7 from §1, recorded in the README with the machine and macOS
+- **Manual acceptance:** S1–S9 from §1, recorded in the README with the machine and macOS
   version they were measured on.
 
 ## 6. Repository and docs
@@ -194,7 +216,7 @@ kept to about 400 changed lines. v1 is therefore split into two features:
 | `"Device Utilization %"` key changes in a future macOS | GPU shows `—`; everything else keeps working |
 | objc2 API churn between minor versions | pin versions; the AppKit surface used is small |
 | Custom menu rows cost more than expected | measured in S2; fall back to attributed titles with a no-op action |
-| Menu bar text unreadable on some wallpapers / tinted menu bars | semantic colours only; checked in S7 |
+| Menu bar text unreadable on some wallpapers / tinted menu bars | primary label colour resolved per appearance and re-resolved on change (§3.1); checked in S7 |
 | App Nap throttles the timer of a background accessory app, leaving values stale | checked during the S1 run; hold an `NSProcessInfo` activity only if values stall |
 | Launch at Login (`SMAppService`) is tied to the code signature, which every ad-hoc rebuild changes | spike it first in `feat/menu`; document re-enabling after a rebuild if needed |
 | AppKit's own floor leaves little room under the 15 MB target | footprint of the bare scaffold measured in `feat/core` Task 1, before anything else is built |

@@ -71,7 +71,7 @@ impl AppDelegate {
         // Menu bar values only; the menu feature passes `true` while the dropdown is open.
         let snapshot = self.ivars().sampler.borrow_mut().sample(false);
         if let Some(status) = self.ivars().status.get() {
-            status.show(self.mtm(), format::values(&snapshot));
+            status.show(format::values(&snapshot));
         }
     }
 

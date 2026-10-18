@@ -5,19 +5,15 @@ use crate::sample::{Pressure, Snapshot};
 /// Shown in the dropdown in place of any reading that failed.
 pub const MISSING: &str = "—";
 
-/// U+2007 and U+2012 are as wide as a digit, so padded numbers and missing values keep the menu bar item a constant width.
-const FIGURE_SPACE: char = '\u{2007}';
-const FIGURE_DASH: char = '\u{2012}';
+/// A digit-wide dash, the menu bar's stand-in for a missing reading.
+const FIGURE_DASH: &str = "\u{2012}";
 const GIB: f64 = (1u64 << 30) as f64;
 
-/// The menu bar's (label, value) pairs in display order.
-pub type StatusLine = [(&'static str, String); 3];
-
-/// CPU, GPU and MEM percentages, the numbers behind the menu bar line.
+/// CPU, GPU and MEM percentages, the numbers behind the menu bar item.
 pub type Values = [Option<f64>; 3];
 
 /// Points a value must move from the one on screen before the bar is redrawn (decision 2026-10-17 / plan Task 10).
-/// Each title change costs ~14 ms of AppKit rendering, and CPU % jitters a point or two every tick.
+/// CPU % jitters a point or two every tick; redrawing on that noise is wasted work.
 pub const HYSTERESIS: f64 = 2.0;
 
 /// The menu bar's values from a sample.
@@ -33,21 +29,12 @@ pub fn moved(shown: &Values, now: &Values) -> bool {
     })
 }
 
-/// The CPU / GPU / MEM pairs for the menu bar.
-pub fn status(v: &Values) -> StatusLine {
-    [
-        ("CPU", percent(v[0])),
-        ("GPU", percent(v[1])),
-        ("MEM", percent(v[2])),
-    ]
-}
-
-/// A whole-number percentage padded to three digit-widths, e.g. "  3%"; missing is "  ‒%".
+/// A whole-number percentage, e.g. "7%"; missing is "‒". The bar's columns are sized for "100%", so no padding.
 pub fn percent(value: Option<f64>) -> String {
     match value {
-        // NaN clamps to NaN and `as u32` maps it to 0. The fill character is U+2007 (FIGURE_SPACE).
-        Some(v) => format!("{:\u{2007}>3}%", v.round().clamp(0.0, 100.0) as u32),
-        None => format!("{FIGURE_SPACE}{FIGURE_SPACE}{FIGURE_DASH}%"),
+        // NaN clamps to NaN and `as u32` maps it to 0.
+        Some(v) => format!("{}%", v.round().clamp(0.0, 100.0) as u32),
+        None => FIGURE_DASH.to_owned(),
     }
 }
 
@@ -109,31 +96,22 @@ mod tests {
     const GIB: u64 = 1 << 30;
 
     #[test]
-    fn percent_pads_to_three_figure_widths() {
-        assert_eq!(percent(Some(3.0)), "\u{2007}\u{2007}3%");
-        assert_eq!(percent(Some(12.4)), "\u{2007}12%");
+    fn percent_is_unpadded() {
+        assert_eq!(percent(Some(7.4)), "7%");
+        assert_eq!(percent(Some(42.0)), "42%");
         assert_eq!(percent(Some(99.6)), "100%");
-        for v in [0.0, 7.0, 42.0, 100.0] {
-            assert_eq!(
-                percent(Some(v)).chars().count(),
-                4,
-                "constant width for {v}"
-            );
-        }
     }
 
     #[test]
     fn percent_clamps_out_of_range_and_nan() {
         assert_eq!(percent(Some(150.0)), "100%");
-        assert_eq!(percent(Some(-2.0)), "\u{2007}\u{2007}0%");
-        assert_eq!(percent(Some(f64::NAN)), "\u{2007}\u{2007}0%");
+        assert_eq!(percent(Some(-2.0)), "0%");
+        assert_eq!(percent(Some(f64::NAN)), "0%");
     }
 
     #[test]
     fn missing_values_show_a_dash() {
-        // Figure dash is digit-wide, so a missing reading keeps the menu bar item's width.
-        assert_eq!(percent(None), "\u{2007}\u{2007}\u{2012}%");
-        assert_eq!(percent(None).chars().count(), 4);
+        assert_eq!(percent(None), "\u{2012}");
         assert_eq!(pressure(None), MISSING);
     }
 
@@ -162,7 +140,7 @@ mod tests {
     }
 
     #[test]
-    fn status_line_is_cpu_gpu_mem_and_survives_missing_gpu() {
+    fn bar_values_are_cpu_gpu_mem_and_survive_missing_gpu() {
         let snap = Snapshot {
             cpu: Some(12.0),
             gpu: None,
@@ -174,10 +152,7 @@ mod tests {
             }),
             ..Snapshot::default()
         };
-        let line = status(&values(&snap));
-        assert_eq!(line[0], ("CPU", "\u{2007}12%".to_string()));
-        assert_eq!(line[1], ("GPU", "\u{2007}\u{2007}\u{2012}%".to_string()));
-        assert_eq!(line[2], ("MEM", "\u{2007}61%".to_string()));
+        assert_eq!(values(&snap).map(percent), ["12%", "\u{2012}", "61%"]);
     }
 
     #[test]
