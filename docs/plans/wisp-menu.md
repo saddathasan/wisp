@@ -126,11 +126,19 @@ latency and helper footprint recorded in `docs/benchmarks/runs/`.
 
 ## Milestone 6 — `ms/6-readme`: measure and document
 
-- [ ] **Task 13: S1/S2.** A Method v1 `scripts/compare.sh` run against Stats, committed in `docs/benchmarks/runs/`.
-- [ ] **Task 14: screenshots** of the item and the open dropdown, dark and light (appearance forced in-process by a
-  temporary patch, never the system setting), cropped to Wisp alone.
-- [ ] **Task 15: README**: what Wisp is and is not, screenshots, measured cost vs Stats with the record link, helper
+- [x] **Task 13: S1/S2.** A Method v1 `scripts/compare.sh` run against Stats, committed in `docs/benchmarks/runs/`.
+  *Normal use, 600 s at `e29c4c7`: Wisp 0.093% CPU, 13.9 MiB; Stats 3.0.22 2.040%, 120.5 MiB (22×, 8.7×); S1 and S2
+  pass ([record](../benchmarks/runs/2026-10-18-e29c4c7.md)). Stats read 3.0.22 (3.0.21 in the earlier runs); it relaunched once just after being opened for the run, before the window (fa47926).*
+- [x] **Task 14: screenshots** of the item and the open dropdown, dark and light (appearance forced in-process by a
+  temporary patch, never the system setting), cropped to Wisp alone. *`docs/images/`: the dropdown captured as its
+  window (`screencapture -l`, helper opened by `performClick`); the item rendered from its own layers at 2× on a
+  transparent background (`renderInContext:`), because here it sits behind the notch overflow on the Retina display
+  and shows only on the 1× external one. Checked against §3.1/§3.2 and the real 1× item; forced Aqua over this dark
+  desktop gives the light menu a grey glass (87dabce).*
+- [x] **Task 15: README**: what Wisp is and is not, screenshots, measured cost vs Stats with the record link, helper
   open latency and footprint, build from source, launch at login after a rebuild, licence. Spec §1 Measured updated.
+  *README with a `<picture>` per screenshot (dark/light by the reader's theme) and the range across the three
+  Method v1 runs; spec §1 has a feat/menu Measured block.*
 
 **Acceptance:** S1 < 0.1% and S2 < 15 MB in the committed run; README complete.
 
