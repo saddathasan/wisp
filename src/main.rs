@@ -55,7 +55,7 @@ define_class!(
                 .ivars()
                 .status
                 .set(StatusItem::new(mtm, self, sel!(openDropdown:)));
-            self.tick();
+            self.tick(true);
             self.start_timer();
             self.observe_sleep_and_lock();
         }
@@ -94,7 +94,7 @@ define_class!(
 
         #[unsafe(method(timerFired:))]
         fn timer_fired(&self, _timer: &NSTimer) {
-            self.tick();
+            self.tick(false);
         }
 
         #[unsafe(method(openDropdown:))]
@@ -155,10 +155,16 @@ impl AppDelegate {
         unsafe { msg_send![super(this), init] }
     }
 
-    /// Samples once and updates the menu bar text.
-    fn tick(&self) {
+    /// Samples once and updates the menu bar text; `fresh` when the baseline was just taken (launch, resume).
+    fn tick(&self, fresh: bool) {
         // Menu bar values only; the helper reads the dropdown's own (spec §3.2).
-        let snapshot = self.ivars().sampler.borrow_mut().sample(false);
+        let mut snapshot = self.ivars().sampler.borrow_mut().sample(false);
+        // A milliseconds-old baseline holds zero or a few CPU ticks (idle ticks are published up to ~1 s apart), so
+        // the delta is a dash or noise either way (41.7% seen at launch); CPU waits for the first interval, as in the
+        // helper.
+        if fresh {
+            snapshot.cpu = None;
+        }
         if let Some(status) = self.ivars().status.get() {
             status.show(format::values(&snapshot));
         }
@@ -222,7 +228,7 @@ impl AppDelegate {
     fn resume(&self, reason: Reason) {
         if self.ivars().paused.borrow_mut().resume(reason) {
             self.ivars().sampler.borrow_mut().reset();
-            self.tick();
+            self.tick(true);
             self.start_timer();
         }
     }
