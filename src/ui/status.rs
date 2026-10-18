@@ -5,13 +5,15 @@ use std::cell::{Cell, RefCell};
 use std::time::{Duration, Instant};
 
 use objc2::rc::Retained;
-use objc2::runtime::AnyObject;
-use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, class, define_class, msg_send};
+use objc2::runtime::{AnyObject, Sel};
+use objc2::{
+    DefinedClass, MainThreadMarker, MainThreadOnly, Message, class, define_class, msg_send,
+};
 use objc2_app_kit::{
     NSAccessibility, NSAppearance, NSAppearanceCustomization, NSAutoresizingMaskOptions, NSColor,
-    NSColorSpace, NSFont, NSFontAttributeName, NSFontWeightMedium, NSFontWeightSemibold,
-    NSForegroundColorAttributeName, NSMenu, NSScreen, NSStatusBar, NSStatusItem, NSStringDrawing,
-    NSVariableStatusItemLength, NSView,
+    NSColorSpace, NSEventMask, NSFont, NSFontAttributeName, NSFontWeightMedium,
+    NSFontWeightSemibold, NSForegroundColorAttributeName, NSScreen, NSStatusBar, NSStatusItem,
+    NSStringDrawing, NSVariableStatusItemLength, NSView,
 };
 use objc2_foundation::{
     NSAttributedString, NSAttributedStringKey, NSDictionary, NSPoint, NSRect, NSSize, NSString,
@@ -47,11 +49,17 @@ pub struct StatusItem {
 }
 
 impl StatusItem {
-    /// Adds the compact item to the menu bar with `menu` as its dropdown.
-    pub fn new(mtm: MainThreadMarker, menu: &NSMenu) -> Self {
+    /// Adds the compact item to the menu bar; a click sends `action` to `target`. It has no NSMenu: the dropdown
+    /// runs in a helper process (ADR 0001).
+    pub fn new(mtm: MainThreadMarker, target: &AnyObject, action: Sel) -> Self {
         let item = NSStatusBar::systemStatusBar().statusItemWithLength(NSVariableStatusItemLength);
-        item.setMenu(Some(menu));
         let button = item.button(mtm).expect("a status item has a button");
+        unsafe {
+            button.setTarget(Some(target));
+            button.setAction(Some(action));
+        }
+        // On press, as a status item's own menu opens.
+        button.sendActionOn(NSEventMask::LeftMouseDown);
         // The layers are invisible to VoiceOver, so the button names the item.
         button.setAccessibilityLabel(Some(ns_string!("Wisp")));
         let view = CompactView::new(mtm, button.bounds().size.height);
@@ -65,6 +73,18 @@ impl StatusItem {
             copy_stale: Cell::new(false),
             copy_at: Cell::new(Instant::now()),
         }
+    }
+
+    /// Where the dropdown goes and how it looks: the button's bottom-left in screen coordinates and the name of the
+    /// button's effective (the menu bar's) appearance.
+    pub fn anchor(&self) -> (NSPoint, Retained<NSString>) {
+        let mtm = self.view.mtm();
+        let button = self.item.button(mtm).expect("a status item has a button");
+        let local = button.convertRect_toView(button.bounds(), None);
+        let frame = button
+            .window()
+            .map_or(local, |w| w.convertRectToScreen(local));
+        (frame.origin, button.effectiveAppearance().name())
     }
 
     /// Draws `values` on the first call and afterwards only when they have moved from what is on screen,
@@ -131,7 +151,7 @@ define_class!(
             self.restyle();
         }
 
-        // Clicks fall through to the status item button, which opens the menu.
+        // Clicks fall through to the status item button, which sends its action.
         #[unsafe(method(hitTest:))]
         fn hit_test(&self, _point: NSPoint) -> *mut NSView {
             std::ptr::null_mut()
@@ -275,7 +295,7 @@ fn set_string(layer: &AnyObject, text: &str, attrs: &Attrs) {
 }
 
 /// Runs `f` with implicit layer animations off, so a new value snaps in rather than cross-fading.
-fn transaction(f: impl FnOnce()) {
+pub(crate) fn transaction(f: impl FnOnce()) {
     let cat = class!(CATransaction);
     let _: () = unsafe { msg_send![cat, begin] };
     let _: () = unsafe { msg_send![cat, setDisableActions: true] };
@@ -283,16 +303,20 @@ fn transaction(f: impl FnOnce()) {
     let _: () = unsafe { msg_send![cat, commit] };
 }
 
-/// The primary label colour as a fixed sRGB value for `appearance`; CATextLayer cannot follow dynamic colours.
+/// The primary label colour as a fixed sRGB value for `appearance`.
+fn resolved(appearance: &NSAppearance) -> Retained<NSColor> {
+    resolve(appearance, &NSColor::labelColor())
+}
+
+/// `color` as a fixed sRGB value for `appearance`; CATextLayer cannot follow dynamic colours.
 // The non-deprecated `performAsCurrentDrawingAppearance:` takes a block, which needs another crate.
 #[allow(deprecated)]
-fn resolved(appearance: &NSAppearance) -> Retained<NSColor> {
+pub(crate) fn resolve(appearance: &NSAppearance, color: &NSColor) -> Retained<NSColor> {
     let prev = NSAppearance::currentAppearance();
     unsafe { NSAppearance::setCurrentAppearance(Some(appearance)) };
-    let color = NSColor::labelColor();
     let fixed = color
         .colorUsingColorSpace(&NSColorSpace::sRGBColorSpace())
-        .unwrap_or(color);
+        .unwrap_or_else(|| color.retain());
     unsafe { NSAppearance::setCurrentAppearance(prev.as_deref()) };
     fixed
 }

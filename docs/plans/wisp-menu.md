@@ -62,19 +62,24 @@ self-merge on green with merge commits; `feat/menu → main` is opened and left 
 
 ## Milestone 3 — `ms/3-helper-dropdown`: the helper shows the §3.2 dropdown
 
-- [ ] **Task 3 (TDD): rows.** `src/ui/menu.rs`: `rows(&Snapshot) -> Vec<Row>` and the section layout, from the
+- [x] **Task 3 (TDD): rows.** `src/ui/menu.rs`: `rows(&Snapshot) -> Vec<Row>` and the section layout, from the
   prototype; tests for the order, the breakdown line and the missing-value dashes. Drop the `dead_code` allows in
-  `format.rs` as the formatters get used.
-- [ ] **Task 4: helper.** `wisp --dropdown <x> <y> <appearance>` builds the menu (section headers, `RowView` rows,
+  `format.rs` as the formatters get used. *4 tests, red on an empty `rows` then green; every `format.rs` allow
+  gone (4426626).*
+- [x] **Task 4: helper.** `wisp --dropdown <x> <y> <appearance>` builds the menu (section headers, `RowView` rows,
   Update Interval submenu, Launch at Login, Quit ⌘Q), samples with `detail` on its own timer at the stored
   interval, pops the menu up at the point and exits when it closes. An item's action must run before the exit.
-- [ ] **Task 5: main side.** The status item has no menu; the button's action spawns the helper at the button's
+  *`src/helper.rs`. The action runs before `popUp…` returns (Up + Return posted in-process: `quit:` 5.8 ms before
+  the return), so it exits straight after; CPU and network show `—` until the first interval (02469d5, eb527b6).*
+- [x] **Task 5: main side.** The status item has no menu; the button's action spawns the helper at the button's
   bottom-left in screen coordinates, at most one at a time. Quit in the helper exits with a status that terminates
-  the main process. `quit_menu` goes.
-- [ ] **Task 6: measure and look.** Open the dropdown in-process (a `scripts/open-latency.patch` that `performClick`s
+  the main process. `quit_menu` goes. *`NSTask` + `NSTaskDidTerminateNotification`, delivered on the main thread;
+  Quit (status 3) verified to terminate main; no NSMenu in main's heap and its images unchanged (fafc024).*
+- [x] **Task 6: measure and look.** Open the dropdown in-process (a `scripts/open-latency.patch` that `performClick`s
   the button after the 20 s settle, holds ~3 s, closes, 5 opens, logs click → menu visible): open latency, the
   helper's peak footprint, the main process's footprint before and after 5 opens (Δ must be ~0). Screenshot the open
-  dropdown and compare with spec §3.2.
+  dropdown and compare with spec §3.2. *Open 130–151 ms (median 138.5), helper peak 18.0–18.4 MiB, main Δ +16 and
+  +32 KiB over two runs ([record](../benchmarks/runs/2026-10-18-fafc024-dropdown.md)); the screenshot matches §3.2 (eeb768f).*
 
 **Acceptance:** gate green; the dropdown matches §3.2 on screen with live rows; main-process Δ ≈ 0 after opens;
 latency and helper footprint recorded in `docs/benchmarks/runs/`.
@@ -123,3 +128,5 @@ latency and helper footprint recorded in `docs/benchmarks/runs/`.
 4. **Mouse:** choosing 5 s makes the bar update every ~5 s; Launch at Login on then off shows and removes Wisp in
    System Settings → General → Login Items. With it on, rebuild, log out and in: Wisp starts.
 5. **Pause:** lock the screen (and let the display sleep) for 2 min with `scripts/measure.sh <pid> 120` running; CPU ≈ 0.
+6. **Mouse choice:** clicking Quit Wisp quits Wisp, and choosing an interval with the mouse closes the menu cleanly
+   (action-before-exit was verified in-process through the keyboard path only).
