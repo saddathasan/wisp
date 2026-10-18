@@ -115,7 +115,9 @@ Quit Wisp                           ⌘Q
   keeps the menu bar item current meanwhile.
 - Sampling pauses on display sleep, system sleep and screen lock, and resumes on wake/unlock
   with a fresh baseline (the first sample after resume is not shown as a delta across the gap).
-- Launch at Login uses `SMAppService.mainApp`. It only works from the bundled `Wisp.app`.
+- Launch at Login uses `SMAppService.mainApp`, called from the helper; the checkmark shows its `status`. It only
+  works from the bundled `Wisp.app` (unbundled, `status` is notFound). A rebuild in place keeps it enabled
+  ([launch-at-login.md](../research/launch-at-login.md)).
 - No Dock icon (`LSUIElement`).
 
 ## 4. Architecture
@@ -172,7 +174,8 @@ use `panic = "abort"`, so a logic bug fails loudly rather than leaving a half-de
 Only what the design needs; exact versions are pinned in the implementation plan.
 
 - `objc2`, `objc2-foundation`, `objc2-app-kit` — AppKit bindings
-- `objc2-service-management` — launch at login
+- ServiceManagement (launch at login) is not a crate: the helper `dlopen`s the framework and calls
+  `SMAppService` through `msg_send`, so there is no new dependency and the main process's loaded images are unchanged
 - `libc` — sysctl and Mach counters (its two deprecated Mach calls are allowed locally; no `mach2`)
 - IOKit through four hand-declared `extern "C"` functions; the CF dictionary it returns is read through
   toll-free bridging to `NSDictionary`, so no IOKit or CoreFoundation crate
@@ -227,5 +230,5 @@ kept to about 400 changed lines. v1 is therefore split into two features:
 | The helper's open latency (~150 ms, ~80 ms of it process start) feels slow | measured in feat/menu; fall back to the in-process NSMenu (supersede ADR 0001) if it does |
 | Menu bar text unreadable on some wallpapers / tinted menu bars | primary label colour resolved per appearance and re-resolved on change (§3.1); checked in S7 |
 | App Nap throttles the timer of a background accessory app, leaving values stale | checked during the S1 run; hold an `NSProcessInfo` activity only if values stall |
-| Launch at Login (`SMAppService`) is tied to the code signature, which every ad-hoc rebuild changes, and is toggled from the helper | spike it first in `feat/menu`, including a call from the helper; document re-enabling after a rebuild if needed |
+| Launch at Login (`SMAppService`) breaks with the ad-hoc signature every rebuild changes, or from the helper | spiked ([launch-at-login.md](../research/launch-at-login.md)): works ad-hoc signed and from a child process, no approval; the record is keyed on bundle id and path, so a rebuild in place stays enabled. A logout/login after a rebuild is a hand check |
 | AppKit's own floor leaves little room under the 15 MB target | footprint of the bare scaffold measured in `feat/core` Task 1, before anything else is built |
