@@ -116,7 +116,7 @@ fn login_spike(args: &[String]) {
     let handle = unsafe { libc::dlopen(path.as_ptr(), libc::RTLD_LAZY) };
     let tag = format!("[pid {} ppid {}]", std::process::id(), unsafe { libc::getppid() });
     let bundle_id = NSBundle::mainBundle().bundleIdentifier();
-    eprintln!("{tag} dlopen={:?} bundleIdentifier={bundle_id:?}", handle);
+    eprintln!("{tag} build=2 dlopen={:?} bundleIdentifier={bundle_id:?}", handle);
     let svc: Retained<AnyObject> = unsafe { msg_send![class!(SMAppService), mainAppService] };
     let status = |when: &str| {
         let s: isize = unsafe { msg_send![&svc, status] };
