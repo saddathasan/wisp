@@ -48,13 +48,15 @@ self-merge on green with merge commits; `feat/menu → main` is opened and left 
 
 ## Milestone 2 — `ms/2-login-spike`: does `SMAppService.mainApp` work ad-hoc signed, and from a helper?
 
-- [ ] **Task 1: spike** on `exp/login-spike`: from the bundled, ad-hoc signed `target/Wisp.app`, call
+- [x] **Task 1: spike** on `exp/login-spike`: from the bundled, ad-hoc signed `target/Wisp.app`, call
   `register`/`unregister`/`status` on `SMAppService.mainApp` from the main process and from a child process of the
   same binary (as the helper will be). Record each call's result and error, `status` before and after, what
   `sfltool dumpbtm` shows, whether approval is needed, and what happens to a registration after a rebuild changes
-  the ad-hoc signature (status read, re-register needed?). Unregister at the end.
-- [ ] **Task 2: record** in `docs/research/launch-at-login.md`; update spec §3.3 / §8 with what the README must say
-  about re-enabling after a rebuild, if anything.
+  the ad-hoc signature (status read, re-register needed?). Unregister at the end. *Works from the main process and
+  a child, no errors, no approval (0 → 1 → 0); a rebuild keeps status 1 and the record enabled; ends unregistered (338faca).*
+- [x] **Task 2: record** in `docs/research/launch-at-login.md`; update spec §3.3 / §8 with what the README must say
+  about re-enabling after a rebuild, if anything. *Recorded; nothing to re-enable after a rebuild in place; spec §3.3,
+  §4.3 and §8 updated.*
 
 **Acceptance:** each question above answered from a real run; Wisp not registered at the end.
 
@@ -119,5 +121,5 @@ latency and helper footprint recorded in `docs/benchmarks/runs/`.
 3. **Outside click:** the menu closes on a click on the desktop, in another app, and on another menu bar item; a
    click on Wisp's item while open closes it and opens no second menu.
 4. **Mouse:** choosing 5 s makes the bar update every ~5 s; Launch at Login on then off shows and removes Wisp in
-   System Settings → General → Login Items.
+   System Settings → General → Login Items. With it on, rebuild, log out and in: Wisp starts.
 5. **Pause:** lock the screen (and let the display sleep) for 2 min with `scripts/measure.sh <pid> 120` running; CPU ≈ 0.
