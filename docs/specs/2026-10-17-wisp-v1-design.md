@@ -121,7 +121,8 @@ Quit Wisp                           ⌘Q
   because menus track events in a separate mode) and the rows update live. The main process's timer
   keeps the menu bar item current meanwhile.
 - Sampling pauses on display sleep, system sleep and screen lock, and resumes on wake/unlock
-  with a fresh baseline (the first sample after resume is not shown as a delta across the gap).
+  with a fresh baseline (the first sample after resume is not shown as a delta across the gap; CPU shows a dash
+  until the first interval, as at launch).
 - Launch at Login uses `SMAppService.mainApp`, called from the helper; the checkmark shows its `status`. It only
   works from the bundled `Wisp.app` (unbundled, `status` is notFound). A rebuild in place keeps it enabled
   ([launch-at-login.md](../research/launch-at-login.md)).

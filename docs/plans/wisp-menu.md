@@ -106,12 +106,21 @@ latency and helper footprint recorded in `docs/benchmarks/runs/`.
 
 ## Milestone 5 — `ms/5-pause`: sleep and lock pause (S3)
 
-- [ ] **Task 10 (TDD): pause reasons.** Display asleep, system asleep and screen locked are tracked separately;
+- [x] **Task 10 (TDD): pause reasons.** Display asleep, system asleep and screen locked are tracked separately;
   sampling resumes only when none is left (e.g. lock → display sleep → display wake stays paused until unlock). Tested.
-- [ ] **Task 11: observers.** `NSWorkspace` screens-did-sleep/wake and will-sleep/did-wake, and the distributed
+  *`src/pause.rs`, a bit set; 3 tests (nested reasons, a resume never paused for, duplicates), red on a stub that
+  always resumed, then green (7df055e).*
+- [x] **Task 11: observers.** `NSWorkspace` screens-did-sleep/wake and will-sleep/did-wake, and the distributed
   `com.apple.screenIsLocked`/`Unlocked`; pausing invalidates the timer; resuming resets the sampler, ticks and restarts it.
-- [ ] **Task 12: verify in-process** with a temporary patch that calls the observer methods: no ticks while paused
-  (CPU over 120 s paused vs running), a fresh baseline after resume.
+  *Lock/unlock observed with `DeliverImmediately`: an accessory app is never active, and the default behaviour holds
+  distributed notifications until it is. Pausing drops the timer, so `helperExited:` has none to restart (2099f0e).*
+- [x] **Task 12: verify in-process** with a temporary patch that calls the observer methods: no ticks while paused
+  (CPU over 120 s paused vs running), a fresh baseline after resume. *`performSelector:withObject:afterDelay:` with
+  unposted notifications (lock +20 s, display sleep +30, display wake +150, unlock +160), bundled build: no tick from
+  +20.0 to +160.0 (display wake alone left it paused), one tick at unlock, then 2.2 s apart. CPU 0.000% (0.01 idle
+  wakeups/s) over 120 s paused vs 0.100% (0.07/s) over 120 s running. The resume tick's CPU came out `None`, and
+  the launch tick's 41.7% is noise over the same milliseconds-old baseline, so both fresh ticks now show CPU as a dash
+  until the first interval, as the helper does (cd697e1).*
 
 **Acceptance:** gate green; paused CPU ≈ 0; the real lock/sleep check is on the hand-check list.
 
