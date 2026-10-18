@@ -261,20 +261,12 @@ define_class!(
     #[ivars = RowIvars]
     struct RowView;
 
-    // Layer colours are resolved, so restyle whenever the appearance or scale can have changed (as status.rs does).
     impl RowView {
+        // Layer colours are resolved, so the row restyles once it is in the menu's window, against the final
+        // appearance and scale. That is the only hook it needs: the helper sets the menu's appearance once before
+        // showing it and lives only while the menu is open, so neither can change afterwards.
         #[unsafe(method(viewDidMoveToWindow))]
         fn moved_to_window(&self) {
-            self.restyle();
-        }
-
-        #[unsafe(method(viewDidChangeEffectiveAppearance))]
-        fn appearance_changed(&self) {
-            self.restyle();
-        }
-
-        #[unsafe(method(viewDidChangeBackingProperties))]
-        fn backing_changed(&self) {
             self.restyle();
         }
     }
