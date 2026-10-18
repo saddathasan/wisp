@@ -107,7 +107,54 @@ fn quit_menu(mtm: MainThreadMarker) -> Retained<NSMenu> {
     menu
 }
 
+/// Spike only (exp/login-spike): `--login-spike <status|register|unregister|child <cmd>>` calls
+/// `SMAppService.mainApp` through a dlopened ServiceManagement and prints the result to stderr.
+fn login_spike(args: &[String]) {
+    use objc2::{class, runtime::AnyObject};
+    use objc2_foundation::{NSBundle, NSError};
+    let path = c"/System/Library/Frameworks/ServiceManagement.framework/ServiceManagement";
+    let handle = unsafe { libc::dlopen(path.as_ptr(), libc::RTLD_LAZY) };
+    let tag = format!("[pid {} ppid {}]", std::process::id(), unsafe { libc::getppid() });
+    let bundle_id = NSBundle::mainBundle().bundleIdentifier();
+    eprintln!("{tag} dlopen={:?} bundleIdentifier={bundle_id:?}", handle);
+    let svc: Retained<AnyObject> = unsafe { msg_send![class!(SMAppService), mainAppService] };
+    let status = |when: &str| {
+        let s: isize = unsafe { msg_send![&svc, status] };
+        eprintln!("{tag} status {when} = {s}");
+    };
+    let report = |name: &str, r: Result<(), Retained<NSError>>| match r {
+        Ok(()) => eprintln!("{tag} {name} = YES"),
+        Err(e) => eprintln!(
+            "{tag} {name} = NO domain={} code={} desc={}",
+            e.domain(),
+            e.code(),
+            e.localizedDescription()
+        ),
+    };
+    status("before");
+    match args.first().map(String::as_str) {
+        Some("register") => report("register", unsafe { msg_send![&svc, registerAndReturnError: _] }),
+        Some("unregister") => {
+            report("unregister", unsafe { msg_send![&svc, unregisterAndReturnError: _] })
+        }
+        Some("child") => {
+            let out = std::process::Command::new(std::env::current_exe().unwrap())
+                .arg("--login-spike")
+                .args(&args[1..])
+                .status();
+            eprintln!("{tag} child exited {out:?}");
+        }
+        _ => {}
+    }
+    status("after");
+}
+
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(i) = args.iter().position(|a| a == "--login-spike") {
+        login_spike(&args[i + 1..]);
+        return;
+    }
     let mtm = MainThreadMarker::new().expect("Wisp must start on the main thread");
     let app = NSApplication::sharedApplication(mtm);
     // LSUIElement covers the bundled app; this also keeps `cargo run` out of the Dock.
