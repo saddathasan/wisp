@@ -55,8 +55,12 @@ define_class!(
             let look = self.ivars().appearance.as_deref();
             let look = look.and_then(|n| NSAppearance::appearanceNamed(&NSString::from_str(n)));
             dropdown.menu.setAppearance(look.as_deref());
+            // The baseline is milliseconds old, and deltas over it are noise (idle CPU ticks are published up to ~1 s
+            // apart), so CPU and network wait for the first interval.
+            let mut opening = self.ivars().sampler.borrow_mut().sample(true);
+            (opening.cpu, opening.net) = (None, None);
+            dropdown.update(&opening);
             let _ = self.ivars().dropdown.set(dropdown);
-            self.tick();
             // Common modes: the menu tracks events in its own run loop mode, where a default-mode timer never fires.
             self.timer(interval as f64, sel!(tick:), true);
             // popUp blocks until the menu closes, so it runs from a run loop callout rather than inside launching.
