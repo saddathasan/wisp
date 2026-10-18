@@ -27,11 +27,26 @@ menu bar item, plus one plain list on click, and nothing else.
 
 - **Source of record:** [`docs/benchmarks/`](../benchmarks/) — the method ([METHOD.md](../benchmarks/METHOD.md)) and every run, raw output included; the figures below are from [the backfilled 2026-10-18 runs](../benchmarks/runs/2026-10-18-compact-bar-backfill.md).
 - **S1, S5:** 10 min side by side, bundled release build after a 20 s settle: Wisp `cpu 0.027%`, Stats `cpu 2.143%`; a clean repeat (no accessibility polling) read Wisp `cpu 0.043%`, Stats `cpu 2.027%`.
-- **S2:** Wisp 14.6 MiB after 10 min (15,270,728 B; `footprint` prints `15 MB`), 14.8 MiB on the clean repeat; Stats 135–137 MB. The live heap is ~4.1–4.4 MB; the rest is AppKit's floor. Two one-time costs plateau and never grow back: switching the active display warms up ~1 MB (method caches, ColorSync and vImage converters for the other display, plateau at ~14.9 MiB after five round trips), and **the first time the menu opens AppKit keeps +1.5 MB heap / +5.4 MB footprint (→ ~20 MiB) for the life of the process**; later opens add nothing. That is the dropdown's cost, open for `feat/menu`. `leaks` stays at 416 leaks / 19.9 KB from launch.
+- **S2:** Wisp 14.6 MiB after 10 min (15,270,728 B; `footprint` prints `15 MB`), 14.8 MiB on the clean repeat; Stats 135–137 MB. The live heap is ~4.1–4.4 MB; the rest is AppKit's floor. Two one-time costs plateau and never grow back: switching the active display warms up ~1 MB (method caches, ColorSync and vImage converters for the other display, plateau at ~14.9 MiB after five round trips), and **the first time an NSMenu opens in a process, AppKit keeps +4.5 to +7.3 MiB for the life of that process**. Later opens add nothing, and nothing gives it back ([research](../research/menu-memory-cost.md)). The dropdown is therefore shown by a short-lived helper process ([ADR 0001](../adr/0001-dropdown-in-helper-process.md)), and Wisp itself never opens a menu. `leaks` stays at 416 leaks / 19.9 KB from launch.
 - **S8:** CPU time ÷ 60 redraws over 120 s, interleaved with the unpatched build. Steady state: forced 0.84, 0.84, 0.84 and 1.00 ms per redraw, unpatched 0.50–0.84 ms per tick (sampling plus noise), so a redraw adds ~0.3–0.5 ms. A re-check read 1.16 and 1.16 ms. The first set read 4.3 and 2.5 ms forced and coincided with the footprint step of a first menu open (19 MB) and the item moving; it never reproduced in six later runs. `sample` in steady state shows only the timer's Core Animation commit.
 - **S9:** the accessibility frame is 130 × 24 pt at `0%`, `100%` and `‒`, and on the real build.
 - **S7:** dark: white labels and values, no light flash in 24 screenshots over the 2.8 s after launch. The item fades in white. With the system in light mode the bar stays dark over this wallpaper and the item stays white. With the button forced to Aqua, the labels and values turn dark. A genuinely light bar was not available on this setup.
 - **Two displays:** the inactive display's copy refreshes every ~30 s while values move (§3.1); before that it sat on stale values for minutes. With the sync on, Wisp read `cpu 0.085%`, 14.4 MiB against Stats' 1.988% ([run](../benchmarks/runs/2026-10-18-7d7bf25.md)); the extra ~0.05% is one ~14 ms button render per 30 s. On the active display the item updates every tick.
+
+**Measured (2026-10-18, feat/menu, same machine; Method v1):**
+
+- **S1, S2, S5:** 10 min in normal use next to Stats 3.0.22, at `e29c4c7` (dropdown helper, settings and pause in): Wisp
+  `cpu 0.093%`, 13.9 MiB (14,566,216 B); Stats `cpu 2.040%`, 120.5 MiB (22× CPU, 8.7× footprint) ([run](../benchmarks/runs/2026-10-18-e29c4c7.md)).
+  Across the three Method v1 runs Wisp reads 0.038–0.093% and 13.9–14.6 MiB, Stats 1.99–2.23% and 120–137 MiB.
+- **S3 (in-process):** with the observers called directly (lock, display sleep, display wake, unlock), no tick from lock
+  to unlock, display wake alone left it paused, and the first tick after unlock started a fresh baseline. CPU 0.000%
+  (0.01 idle wakeups/s) over 120 s paused against 0.100% (0.07/s) over 120 s running. A real lock and display sleep is
+  on the hand-check list.
+- **Dropdown (ADR 0001):** opens in 130–151 ms (median 138.5 ms), about half of it process start; the helper peaks at
+  18.0–18.4 MiB while open and gives it all back on exit; the main process keeps +16 and +32 KiB after five opens and
+  loads no new image ([run](../benchmarks/runs/2026-10-18-fafc024-dropdown.md)).
+- **S7:** screenshots in `docs/images/`, the item rendered from its own layers at 2× (it sits behind the notch overflow
+  on the built-in display here) and the dropdown captured as a window, each with the appearance forced in-process.
 
 ## 2. Scope
 
@@ -69,7 +84,10 @@ left to right.
 
 ### 3.2 Dropdown (on click)
 
-A native `NSMenu`:
+A native `NSMenu`, shown by a short-lived helper process (ADR 0001). A press on the status item runs the same
+binary as `wisp --dropdown <x> <y> <appearance>` (an `NSTask`): the button's bottom-left in screen coordinates and
+the name of the menu bar's appearance, which the menu takes as a status item's own menu would. The helper shows the menu at that point and exits when it closes, so the
+menu's ~5–7 MiB of AppKit warm-up goes back to the system every time:
 
 ```
 SYSTEM
@@ -95,20 +113,34 @@ Quit Wisp                           ⌘Q
   greyed out and highlight on hover; info rows must do neither. Labels sit left, values sit in
   one right-aligned column; the breakdown line uses the secondary label colour.
 - The pressure dot is green (Normal), yellow (Warning) or red (Critical), using system colours.
-- Rows are built once at launch and updated in place, only while the menu is open.
-- Network, pressure and swap are read only while the menu is open; with it closed, each tick reads
-  just CPU, GPU and memory. The network baseline is dropped while closed, so the first rate after
-  opening is never averaged across the closed period.
+- The helper builds the rows when it starts and updates them in place on its own timer while the menu is open.
+- Network, pressure and swap are read only by the helper; the main process reads just CPU, GPU and
+  memory each tick. The helper starts its own network baseline, so the first rate after opening is
+  never averaged across the closed period. CPU and network show `—` until the helper's first interval: a delta
+  over the milliseconds since its baseline is noise.
+- At most one helper runs; a click while one is open does nothing more. The item's button stays highlighted while
+  the helper runs, as a status item with its own menu does.
+- The helper writes the interval to `NSUserDefaults` (same bundle id) and waits for it to reach cfprefsd before it
+  exits. The main process re-reads it when the helper exits, learning of the exit from `NSTaskDidTerminateNotification`
+  on its main thread (no polling), and restarts its timer only if it changed. Launch at Login is `SMAppService`'s own
+  state, never stored. Quit makes the helper exit with a dedicated status (`QUIT_STATUS`) that tells the
+  main process to terminate. A chosen item's action runs before `popUpMenuPositioningItem…` returns, so the helper
+  exits straight after it.
 - Interval and Launch at Login use standard checkmarks; Quit has ⌘Q.
 
 ### 3.3 Behaviour
 
-- Default interval **2 s**; options 1, 2, 3, 5, 10 s. The choice persists (`NSUserDefaults`).
-- While the menu is open, the timer keeps firing (scheduled in the run loop's common modes,
-  because menus track events in a separate mode) and the rows update live.
+- Default interval **2 s**; options 1, 2, 3, 5, 10 s. The choice persists (`NSUserDefaults`); any other stored
+  value reads as 2 s.
+- While the menu is open, the helper's timer keeps firing (scheduled in the run loop's common modes,
+  because menus track events in a separate mode) and the rows update live. The main process's timer
+  keeps the menu bar item current meanwhile.
 - Sampling pauses on display sleep, system sleep and screen lock, and resumes on wake/unlock
-  with a fresh baseline (the first sample after resume is not shown as a delta across the gap).
-- Launch at Login uses `SMAppService.mainApp`. It only works from the bundled `Wisp.app`.
+  with a fresh baseline (the first sample after resume is not shown as a delta across the gap; CPU shows a dash
+  until the first interval, as at launch).
+- Launch at Login uses `SMAppService.mainApp`, called from the helper; the checkmark shows its `status`. It only
+  works from the bundled `Wisp.app` (unbundled, `status` is notFound). A rebuild in place keeps it enabled
+  ([launch-at-login.md](../research/launch-at-login.md)).
 - No Dock icon (`LSUIElement`).
 
 ## 4. Architecture
@@ -117,7 +149,9 @@ A single Rust binary crate. macOS 14+, `aarch64-apple-darwin` only.
 
 ```
 src/
-  main.rs        app delegate: startup, timer, sleep/lock observers, settings, launch at login
+  main.rs        app delegate: startup, timer, sleep/lock observers, settings; spawns the helper on a click;
+                 `--dropdown` runs the helper (ADR 0001) instead
+  helper.rs      the helper process: pops the menu up, samples on its own timer, launch at login, exits on close
   sample/        reads the system; no AppKit, so it can be unit-tested
     mod.rs       Snapshot type + Sampler that owns per-metric state
     cpu.rs
@@ -127,12 +161,12 @@ src/
   format.rs      Snapshot → display strings (pure)
   ui/
     status.rs    menu bar item: a layer-drawn two-line view, redrawn only when a value moves ≥ 2 points
-    menu.rs      dropdown construction and in-place row updates
+    menu.rs      dropdown construction and in-place row updates (helper process only)
 ```
 
 **Data flow:** timer fires → `Sampler::sample()` returns a `Snapshot` → `format` produces strings →
-`status` compares with the values on screen and swaps the layer strings only when one has moved → if the menu is open,
-`menu` updates its rows.
+`status` compares with the values on screen and swaps the layer strings only when one has moved. A click
+spawns the helper, which runs the same sample → format path into `menu` rows while it is open, then exits.
 
 Everything runs on the main thread. One sample is a handful of system calls (microseconds), so a
 background queue adds synchronisation without saving anything. If profiling ever shows sampling
@@ -164,7 +198,8 @@ use `panic = "abort"`, so a logic bug fails loudly rather than leaving a half-de
 Only what the design needs; exact versions are pinned in the implementation plan.
 
 - `objc2`, `objc2-foundation`, `objc2-app-kit` — AppKit bindings
-- `objc2-service-management` — launch at login
+- ServiceManagement (launch at login) is not a crate: the helper `dlopen`s the framework and calls
+  `SMAppService` through `msg_send`, so there is no new dependency and the main process's loaded images are unchanged
 - `libc` — sysctl and Mach counters (its two deprecated Mach calls are allowed locally; no `mach2`)
 - IOKit through four hand-declared `extern "C"` functions; the CF dictionary it returns is read through
   toll-free bridging to `NSDictionary`, so no IOKit or CoreFoundation crate
@@ -215,8 +250,9 @@ kept to about 400 changed lines. v1 is therefore split into two features:
 |---|---|
 | `"Device Utilization %"` key changes in a future macOS | GPU shows `—`; everything else keeps working |
 | objc2 API churn between minor versions | pin versions; the AppKit surface used is small |
-| Custom menu rows cost more than expected | measured in S2; fall back to attributed titles with a no-op action |
+| An NSMenu permanently costs the process +4.5–7.3 MiB | the menu lives in a short-lived helper (ADR 0001); the main process never opens one |
+| The helper's open latency (~150 ms, ~80 ms of it process start) feels slow | measured in feat/menu; fall back to the in-process NSMenu (supersede ADR 0001) if it does |
 | Menu bar text unreadable on some wallpapers / tinted menu bars | primary label colour resolved per appearance and re-resolved on change (§3.1); checked in S7 |
 | App Nap throttles the timer of a background accessory app, leaving values stale | checked during the S1 run; hold an `NSProcessInfo` activity only if values stall |
-| Launch at Login (`SMAppService`) is tied to the code signature, which every ad-hoc rebuild changes | spike it first in `feat/menu`; document re-enabling after a rebuild if needed |
+| Launch at Login (`SMAppService`) breaks with the ad-hoc signature every rebuild changes, or from the helper | spiked ([launch-at-login.md](../research/launch-at-login.md)): works ad-hoc signed and from a child process, no approval; the record is keyed on bundle id and path, so a rebuild in place stays enabled. A logout/login after a rebuild is a hand check |
 | AppKit's own floor leaves little room under the 15 MB target | footprint of the bare scaffold measured in `feat/core` Task 1, before anything else is built |

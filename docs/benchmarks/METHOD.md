@@ -57,8 +57,9 @@ scripts/compare.sh "idle"  # or "normal use"; optional 2nd argument: seconds (de
 
 ## Rules during a run
 
-- **Never open either app's menu.** Wisp's first menu open permanently adds ~5 MB footprint for the life
-  of the process (spec §1); a run in which a menu was opened is void.
+- **Never open either app's menu.** In-process, a first NSMenu open permanently adds 4.5–7.3 MiB of
+  footprint ([research](../research/menu-memory-cost.md)); Wisp's dropdown runs in a separate helper
+  process that `measure.sh` doesn't count (ADR 0001). A run in which a menu was opened is void.
 - **Nothing polls the apps' accessibility tree** (System Events UI scripting, Accessibility Inspector,
   screen readers): answering it allocates and runs code inside the app.
 - **Screen awake** and unlocked for the whole window: Wisp pauses on display sleep and lock (spec
@@ -110,3 +111,31 @@ seconds = CPU share × 120 s (e.g. `cpu 0.042%` → 0.0504 s → 0.84 ms). The u
 same way gives the per-tick floor (sampling and timer); run them interleaved, forced and unpatched
 alternately. The same rules apply: no menu, no accessibility polling, screen awake. Record the raw
 output in `runs/` with the patch's commit.
+
+## Dropdown: open latency and footprint (Wisp only)
+
+How fast the dropdown helper (ADR 0001) opens, what it costs while open, and that the main process keeps nothing
+after it. The patch `scripts/open-latency.patch` makes the main process, after the 20 s settle, `performClick` its own
+button 5 times: the real click path, no synthetic input. Each helper closes its menu itself after 3 s (`cancelTracking`,
+as an outside click would) and the next click comes 5 s after it exits. Both processes log `<epoch ms> <pid> <event>`
+to the same stderr: `click N` (main), `popUp`, `visible` (the helper's menu window is on screen), `closed` (helper),
+`exit N helper <pid> status S` (main) and `done`.
+
+```sh
+git apply scripts/open-latency.patch
+scripts/bundle.sh
+pkill -x wisp; open --stderr /tmp/wisp-open.log target/Wisp.app
+# ~17 s in, main before:  footprint -f bytes --noCategories <main pid>; vmmap <main pid> | grep '^__TEXT'
+# ~2 s into each open:     footprint -f bytes --noCategories "$(pgrep -P <main pid> -x wisp)"   # the helper
+# 3 s after `done`:        footprint and vmmap of the main process again
+git apply -R scripts/open-latency.patch   # revert; never commit the patched tree
+scripts/bundle.sh                         # rebuild the real app
+```
+
+- **Open latency** = `visible` − `click` for each open; `popUp` − `click` is the process start.
+- **Helper peak** = the helper's `phys_footprint_peak` while its menu is up.
+- **Main Δ** = main footprint after the 5 opens − before; it must stay ≈ 0. Main's `__TEXT` image list must not
+  change (no ServiceManagement, no SwiftUI).
+
+The menu shows on screen for 3 s at a time: don't click or type during the run, or the hold ends early. Record the raw
+log and footprints in `runs/` with the commit the patch was applied to.

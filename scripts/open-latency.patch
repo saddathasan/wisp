@@ -1,0 +1,148 @@
+diff --git a/src/helper.rs b/src/helper.rs
+index 942b9db..46aea02 100644
+--- a/src/helper.rs
++++ b/src/helper.rs
+@@ -74,12 +74,41 @@ define_class!(
+         #[unsafe(method(open:))]
+         fn open(&self, _timer: &NSTimer) {
+             let Some(d) = self.ivars().dropdown.get() else { return };
++            crate::latency_log("popUp");
++            self.timer(0.001, sel!(latencyPoll:), true);
++            if let Some(hold) = std::env::var("WISP_HOLD").ok().and_then(|s| s.parse().ok()) {
++                self.timer(hold, sel!(latencyClose:), false);
++            }
+             // Returns once the menu has closed. A chosen item's action has already run by then (checked on macOS 27
+             // by selecting with Up + Return inside tracking), so its status is set before the exit.
+             d.menu.popUpMenuPositioningItem_atLocation_inView(None, self.ivars().at, None);
++            crate::latency_log("closed");
+             std::process::exit(self.ivars().status.get());
+         }
+ 
++        /// MEASUREMENT ONLY: the menu's window is on screen once the window server reports it visible.
++        #[unsafe(method(latencyPoll:))]
++        fn latency_poll(&self, timer: &NSTimer) {
++            let app = NSApplication::sharedApplication(self.mtm());
++            let shown = app.windows().iter().any(|w| {
++                w.isVisible()
++                    && w.occlusionState()
++                        .contains(objc2_app_kit::NSWindowOcclusionState::Visible)
++            });
++            if shown {
++                timer.invalidate();
++                crate::latency_log("visible");
++            }
++        }
++
++        /// MEASUREMENT ONLY: closes the menu as a click outside it would.
++        #[unsafe(method(latencyClose:))]
++        fn latency_close(&self, _timer: &NSTimer) {
++            if let Some(d) = self.ivars().dropdown.get() {
++                d.menu.cancelTracking();
++            }
++        }
++
+         #[unsafe(method(setInterval:))]
+         fn set_interval(&self, sender: &NSMenuItem) {
+             let defaults = NSUserDefaults::standardUserDefaults();
+diff --git a/src/main.rs b/src/main.rs
+index c9b4849..f3b3a95 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -58,6 +58,9 @@ define_class!(
+             self.tick(true);
+             self.start_timer();
+             self.observe_sleep_and_lock();
++            // MEASUREMENT ONLY (scripts/open-latency.patch): the helper inherits this and closes itself after 3 s.
++            unsafe { std::env::set_var("WISP_HOLD", "3") };
++            self.after(20.0, sel!(latencyClick:));
+         }
+     }
+ 
+@@ -97,6 +100,15 @@ define_class!(
+             self.tick(false);
+         }
+ 
++        #[unsafe(method(latencyClick:))]
++        fn latency_click(&self, _timer: &NSTimer) {
++            let i = LATENCY_CLICKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
++            latency_log(&format!("click {i}"));
++            if let Some(status) = self.ivars().status.get() {
++                status.click();
++            }
++        }
++
+         #[unsafe(method(openDropdown:))]
+         fn open_dropdown(&self, _sender: Option<&AnyObject>) {
+             // At most one helper; a click while its menu is up is the click that closes it.
+@@ -115,6 +127,18 @@ define_class!(
+             let Some(task) = self.ivars().helper.take() else {
+                 return;
+             };
++            let i = LATENCY_CLICKS.load(std::sync::atomic::Ordering::Relaxed);
++            latency_log(&format!(
++                "exit {i} helper {} status {} main_thread {}",
++                task.processIdentifier(),
++                task.terminationStatus(),
++                unsafe { libc::pthread_main_np() } == 1
++            ));
++            if i < 5 {
++                self.after(5.0, sel!(latencyClick:));
++            } else {
++                latency_log("done");
++            }
+             unsafe {
+                 NSNotificationCenter::defaultCenter().removeObserver_name_object(
+                     self,
+@@ -198,6 +222,16 @@ impl AppDelegate {
+         Some(task)
+     }
+ 
++    /// MEASUREMENT ONLY: a one-shot timer in common modes.
++    fn after(&self, secs: f64, action: objc2::runtime::Sel) {
++        let timer = unsafe {
++            NSTimer::timerWithTimeInterval_target_selector_userInfo_repeats(
++                secs, self, action, None, false,
++            )
++        };
++        unsafe { NSRunLoop::mainRunLoop().addTimer_forMode(&timer, NSRunLoopCommonModes) };
++    }
++
+     /// One repeating timer for everything, at the stored interval. The 10% tolerance lets macOS batch our wakeup with
+     /// others; common modes keep it firing while the button tracks a press (event tracking has its own run loop mode).
+     fn start_timer(&self) {
+@@ -277,6 +311,17 @@ impl AppDelegate {
+     }
+ }
+ 
++/// MEASUREMENT ONLY: opens so far.
++static LATENCY_CLICKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
++
++/// MEASUREMENT ONLY: epoch ms, pid, event on stderr; the helper writes the same format to the same stream.
++pub fn latency_log(msg: &str) {
++    let ms = std::time::SystemTime::now()
++        .duration_since(std::time::UNIX_EPOCH)
++        .map_or(0.0, |d| d.as_secs_f64() * 1000.0);
++    eprintln!("{ms:.1} {} {msg}", std::process::id());
++}
++
+ fn main() {
+     let args: Vec<String> = std::env::args().skip(1).collect();
+     if args.first().map(String::as_str) == Some("--dropdown") {
+diff --git a/src/ui/status.rs b/src/ui/status.rs
+index 985a806..b028447 100644
+--- a/src/ui/status.rs
++++ b/src/ui/status.rs
+@@ -82,6 +82,13 @@ impl StatusItem {
+         }
+     }
+ 
++    /// MEASUREMENT ONLY (scripts/open-latency.patch): the button's real click path, as a user's click takes it.
++    pub fn click(&self) {
++        if let Some(button) = self.item.button(self.view.mtm()) {
++            unsafe { button.performClick(None) };
++        }
++    }
++
+     /// Where the dropdown goes and how it looks: the button's screen bottom-left and its appearance name.
+     pub fn anchor(&self) -> (NSPoint, Retained<NSString>) {
+         // The button's effective appearance is the menu bar's, which the helper's menu should match.
