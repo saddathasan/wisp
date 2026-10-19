@@ -145,6 +145,8 @@ mod tests {
                 app: 40,
                 wired: 11,
                 compressed: 10,
+                free: 39,
+                cached: 0,
             }),
             ..Snapshot::default()
         };
