@@ -1,0 +1,82 @@
+diff --git a/src/main.rs b/src/main.rs
+index c9b4849..4961c18 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -167,6 +167,19 @@ impl AppDelegate {
+         }
+         if let Some(status) = self.ivars().status.get() {
+             status.show(format::values(&snapshot));
++            // MEASUREMENT ONLY (scripts/accuracy.patch, S6): what this tick read and what the bar now shows.
++            let bar = status.shown.get().map(|v| v.map(format::percent).join(" ")).unwrap_or_default();
++            let cpu = snapshot.cpu.map_or("-".to_owned(), |c| format!("{c:.2}"));
++            let swap = sample::read_swap();
++            if let Some(m) = snapshot.mem {
++                eprintln!(
++                    "{} tick cpu {cpu} used {} app {} wired {} compressed {} swap {}/{} bar \"{bar}\" used_str \"{}\" swap_str \"{}\"",
++                    epoch_ms(), m.used(), m.app, m.wired, m.compressed,
++                    swap.map_or(0, |w| w.used), swap.map_or(0, |w| w.total),
++                    format::size_of_total(m.used(), m.total),
++                    swap.map_or(format::MISSING.to_owned(), |w| format::size_of_total(w.used, w.total)),
++                );
++            }
+         }
+     }
+ 
+@@ -277,11 +290,17 @@ impl AppDelegate {
+     }
+ }
+ 
++/// MEASUREMENT ONLY (scripts/accuracy.patch, S6).
++fn epoch_ms() -> u128 {
++    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()
++}
++
+ fn main() {
+     let args: Vec<String> = std::env::args().skip(1).collect();
+     if args.first().map(String::as_str) == Some("--dropdown") {
+         helper::run(&args[1..]);
+     }
++    sample::log_raw_ticks();
+     let mtm = MainThreadMarker::new().expect("Wisp must start on the main thread");
+     let app = NSApplication::sharedApplication(mtm);
+     // LSUIElement covers the bundled app; this also keeps `cargo run` out of the Dock.
+diff --git a/src/sample/mod.rs b/src/sample/mod.rs
+index dc32695..cdb623e 100644
+--- a/src/sample/mod.rs
++++ b/src/sample/mod.rs
+@@ -11,6 +11,22 @@ use std::time::Instant;
+ pub use mem::{Memory, Pressure, Swap};
+ pub use net::Net;
+ 
++// MEASUREMENT ONLY (scripts/accuracy.patch, S6).
++pub use mem::read_swap;
++
++/// MEASUREMENT ONLY: logs `<epoch ms> raw <user> <system> <idle> <nice>` cumulative ticks every 250 ms.
++pub fn log_raw_ticks() {
++    std::thread::spawn(|| {
++        let host = sys::host();
++        loop {
++            if let Some(t) = cpu::read(host) {
++                eprintln!("{} raw {} {} {} {}", crate::epoch_ms(), t.0[0], t.0[1], t.0[2], t.0[3]);
++            }
++            std::thread::sleep(std::time::Duration::from_millis(250));
++        }
++    });
++}
++
+ /// One reading of everything Wisp displays; `None` means that reading failed this tick.
+ #[derive(Debug, Clone, Default, PartialEq)]
+ pub struct Snapshot {
+diff --git a/src/ui/status.rs b/src/ui/status.rs
+index 985a806..d9fc2dc 100644
+--- a/src/ui/status.rs
++++ b/src/ui/status.rs
+@@ -42,7 +42,7 @@ pub struct StatusItem {
+     // Also keeps the item in the menu bar; AppKit removes it once released.
+     item: Retained<NSStatusItem>,
+     view: Retained<CompactView>,
+-    shown: Cell<Option<Values>>,
++    pub shown: Cell<Option<Values>>,
+     /// Values changed since the inactive display's copy was last refreshed.
+     copy_stale: Cell<bool>,
+     copy_at: Cell<Instant>,
