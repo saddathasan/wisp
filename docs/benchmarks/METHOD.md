@@ -169,3 +169,43 @@ scripts/bundle.sh                         # rebuild the real app
 
 The menu shows on screen for 3 s at a time: don't click or type during the run, or the hold ends early. Record the raw
 log and footprints in `runs/` with the commit the patch was applied to.
+
+## S6: accuracy against Activity Monitor (Wisp only)
+
+Whether Wisp's readings agree with Activity Monitor's (spec §1, S6: CPU %, Memory Used and Swap within rounding). The
+patch `scripts/accuracy.patch` makes Wisp log to stderr, in-process: every tick from the real `tick()` path,
+`<epoch ms> tick cpu <pct|-> used <b> app <b> wired <b> compressed <b> swap <used>/<total> bar "<bar strings>"
+used_str "<dropdown Used>" swap_str "<dropdown Swap>"` (swap is read in the patch only), and every 250 ms from a
+background thread `<epoch ms> raw <user> <system> <idle> <nice>`, the cumulative CPU ticks, so Wisp's CPU can be
+computed afterwards over any window.
+
+```sh
+git apply scripts/accuracy.patch
+scripts/bundle.sh
+pkill -x wisp; open --stderr <scratch>/wisp.log target/Wisp.app
+scripts/am-capture.zsh <AM window id> <scratch>/shots 0.15   # touch <scratch>/shots/STOP to end it
+swiftc -O scripts/am-ocr.swift -o <scratch>/am-ocr && <scratch>/am-ocr <scratch>/shots/*.png > <scratch>/ocr.txt
+git apply -R scripts/accuracy.patch      # revert; never commit the patched tree
+scripts/bundle.sh                        # rebuild the real app
+```
+
+Activity Monitor is the user's own window, captured with `screencapture -l` (off screen works, nothing is activated);
+`CGWindowListCopyWindowInfo` gives its window id. Never click, script or resize it, and never change its settings:
+its refresh period is measured from the captures (a refresh is the moment its numbers change; the value then
+describes the period before it). **Screenshots show the process list: keep them in a scratch directory, never
+commit them.** Spot-check the OCR by eye on a few frames; drop frames where a value is missing.
+
+- **Memory tab** (at least 12 refreshes): pair each Wisp tick with the refresh nearest in time and compare Memory
+  Used, App, Wired, Compressed and Swap Used (AM shows binary GB to 2 decimals), and AM against the strings Wisp shows
+  (1 decimal). Memory moves, so note the time gap per pair; under pressure a 0.5 s gap is worth tenths of a GB.
+- **CPU tab** (at least 20 refreshes; capture every ~0.27 s so each refresh is pinned to about ±0.14 s): AM's CPU is
+  System + User. Compare it with Wisp's busy share from the `raw` lines over the same window (the AM period, ending
+  at the refresh) and, separately, with Wisp's nearest tick (a different window). Ticks are published in batches, so
+  a single ~1 s window carries quantisation noise: quantify it by moving each window end one raw sample either way.
+  The long window (all refreshes summed) removes it and decides.
+- **Read it** as Wisp − AM per pair, its mean (bias) and mean/max |d|. Memory and Swap pass when the bias is within
+  AM's rounding and the spread is explained by timing; CPU passes when the long window and the mean of the
+  window-matched pairs are within about a point. A systematic offset is a definition bug: debug it to the root cause.
+  Record the tables, the summary and the raw log lines for the sampled periods in `runs/`, with the commit.
+
+This adds a measurement; it does not change v1's Wisp-vs-Stats procedure, so the method stays v1.

@@ -362,6 +362,8 @@ mod tests {
                 app: GIB * 112 / 10,
                 wired: GIB * 31 / 10,
                 compressed: GIB * 52 / 10,
+                free: GIB * 2,
+                cached: GIB * 105 / 10,
             }),
             pressure: Some(Pressure::Warning),
             swap: Some(Swap {
