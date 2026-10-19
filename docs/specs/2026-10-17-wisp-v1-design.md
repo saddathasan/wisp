@@ -181,7 +181,7 @@ All work without root or entitlements. The GPU key, pressure level, swap and 16 
 | CPU % | `host_statistics(HOST_CPU_LOAD_INFO)` | `(Δuser+Δsystem+Δnice) / Δtotal` between samples |
 | Memory total | `sysctl hw.memsize` | read once |
 | App / Wired / Compressed | `host_statistics64(HOST_VM_INFO64)` | App = `internal_page_count − purgeable_count`; Wired = `wire_count`; Compressed = `compressor_page_count`; pages × `sysconf(_SC_PAGESIZE)` (16 KB on Apple Silicon — never hard-code 4096) |
-| Memory Used / % | derived | Used = App + Wired + Compressed (Activity Monitor's definition); % = Used / total |
+| Memory Used / % | `host_statistics64` + `sysctl vm.page_free_count`, `vm.page_free_cpu_count` | Used = total − Free − Cached Files (Activity Monitor's definition), Free = `vm.page_free_count − vm.page_free_cpu_count` (fallback `free_count − speculative_count`), Cached Files = `external_page_count + purgeable_count`; % = Used / total. App + Wired + Compressed falls short by the pages outside every queue (`vm.page_booter_count`, 0.6 GB on an M5), so it is not Used (S6 run) |
 | Pressure | `sysctl kern.memorystatus_vm_pressure_level` | 1 Normal, 2 Warning, 4 Critical, other → `—` |
 | Swap | `sysctl vm.swapusage` (`xsw_usage`) | used / total |
 | GPU % | IOKit `IOAccelerator` → `PerformanceStatistics` → `"Device Utilization %"` | match the service **once** at startup and keep it; per tick only copy the property; release CF objects every tick |
