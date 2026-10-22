@@ -112,7 +112,8 @@ impl Dropdown {
     pub fn new(mtm: MainThreadMarker, target: &AnyObject, interval: isize, login: bool) -> Self {
         // `target` gets `setInterval:` (tag = seconds), `toggleLogin:` and `quit:`.
         let menu = NSMenu::new(mtm);
-        // Every item's enabled state is set here; autoenabling would grey the action-less reading rows.
+        // Every item's enabled state is set here. Reading rows are disabled so ↓/↑ skip them; their views
+        // draw resolved colours and never consult the item, so disabling does not grey them.
         menu.setAutoenablesItems(false);
         let content = rows(&Snapshot::default());
         let mut content = content.into_iter();
@@ -126,6 +127,7 @@ impl Dropdown {
                 let item = NSMenuItem::new(mtm);
                 let view = RowView::new(mtm, row);
                 item.setView(Some(&view));
+                item.setEnabled(false);
                 menu.addItem(&item);
                 views.push(view);
             }
@@ -455,6 +457,48 @@ mod tests {
         }
         for garbage in [0, -1, 4, 7, 11, 60, isize::MAX] {
             assert_eq!(interval(garbage), 2, "stored {garbage}");
+        }
+    }
+
+    #[test]
+    fn keyboard_navigation_skips_the_reading_rows_only() {
+        // libtest runs tests off the main thread; this test is the only AppKit user and nothing here touches
+        // a window or the run loop, so building the menu off-main is sound for the assertion's purpose.
+        let mtm = unsafe { MainThreadMarker::new_unchecked() };
+        let target = objc2_foundation::NSObject::new();
+        let d = Dropdown::new(mtm, &target, 2, false);
+        let items = d.menu.itemArray();
+        let readings: Vec<_> = items.iter().filter(|i| i.view().is_some()).collect();
+        assert_eq!(readings.len(), rows(&full()).len());
+        assert!(
+            readings.iter().all(|i| !i.isEnabled()),
+            "a reading row is enabled"
+        );
+        let mut actions = Vec::new();
+        for item in items.iter().filter(|i| i.view().is_none()) {
+            if let Some(sub) = item.submenu() {
+                actions.extend(sub.itemArray().iter());
+            }
+            if !item.isSeparatorItem() && !item.isSectionHeader() {
+                actions.push(item);
+            }
+        }
+        let titles: Vec<_> = actions.iter().map(|i| i.title().to_string()).collect();
+        assert_eq!(
+            titles,
+            [
+                "1 s",
+                "2 s",
+                "3 s",
+                "5 s",
+                "10 s",
+                "Update Interval",
+                "Launch at Login",
+                "Quit Wisp"
+            ]
+        );
+        for item in &actions {
+            assert!(item.isEnabled(), "{} is disabled", item.title());
         }
     }
 
